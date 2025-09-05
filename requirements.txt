@@ -1,5 +1,7 @@
 streamlit
 pandas
+openpyxl
+numpy
 plotly
 streamlit-echarts
 streamlit-autorefresh
