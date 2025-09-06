@@ -15,26 +15,20 @@ import plotly.graph_objects as go
 st.set_page_config(page_title="技能覆盖分析大屏", layout="wide")
 
 # -------------------- 页面样式 --------------------
+# -------------------- 页面样式 --------------------
 PAGE_CSS = """
 <style>
-:root {
-    --primary:#4cc9f0;
-    --bg:#0d1b2a;
-    --bg2:#1b263b;
-    --text:#fff;
-    --muted:#ccc;
-}
-[data-testid="stAppViewContainer"]{
-    background:var(--bg);
-    color:var(--text);
+body, [data-testid="stAppViewContainer"]{
+    background-color:#0d1b2a !important;
+    color:#ffffff !important;
 }
 [data-testid="stSidebar"]{
-    background:var(--bg2);
-    color:var(--text);
+    background-color:#1b263b !important;
+    color:#ffffff !important;
 }
 div.stButton>button{
-    background:var(--primary);
-    color:#000;
+    background-color:#4cc9f0 !important;
+    color:#000000 !important;
     border-radius:10px;
     height:40px;
     font-weight:700;
@@ -42,11 +36,11 @@ div.stButton>button{
     width:100%;
 }
 div.stButton>button:hover{
-    background:#4895ef;
-    color:#fff;
+    background-color:#4895ef !important;
+    color:#ffffff !important;
 }
 .metric-card{
-    background:var(--bg2);
+    background-color:#1b263b !important;
     padding:20px;
     border-radius:16px;
     text-align:center;
@@ -55,11 +49,11 @@ div.stButton>button:hover{
 .metric-value{
     font-size:36px;
     font-weight:800;
-    color:var(--primary);
+    color:#4cc9f0 !important;
 }
 .metric-label{
     font-size:14px;
-    color:var(--muted);
+    color:#cccccc !important;
 }
 hr{
     border:none;
@@ -93,6 +87,7 @@ hr{
 </style>
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
+
 
 # -------------------- 左侧栏 --------------------
 st.sidebar.header("📂 数据控制区")
