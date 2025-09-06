@@ -23,7 +23,7 @@ PAGE_CSS = """
     --bg2:#1b263b;
     --text:#fff;
     --muted:#ccc;
-}z
+}
 [data-testid="stAppViewContainer"]{
     background:var(--bg);
     color:var(--text);
