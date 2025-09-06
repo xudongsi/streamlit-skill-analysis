@@ -2,7 +2,6 @@
 
 import os
 import time
-import io
 from typing import List, Tuple
 
 import pandas as pd
@@ -14,7 +13,6 @@ import plotly.graph_objects as go
 # -------------------- 页面配置 --------------------
 st.set_page_config(page_title="技能覆盖分析大屏", layout="wide")
 
-# -------------------- 页面样式 --------------------
 # -------------------- 页面样式 --------------------
 PAGE_CSS = """
 <style>
@@ -60,38 +58,10 @@ hr{
     border-top:1px solid rgba(255,255,255,.12);
     margin:16px 0;
 }
-
-/* ----------- 分辨率自适应 ----------- */
-@media screen and (max-width: 1600px) {
-    .metric-value { font-size:28px; }
-    .metric-card { padding:16px; }
-}
-@media screen and (max-width: 1200px) {
-    .metric-value { font-size:22px; }
-    .metric-label { font-size:12px; }
-    div.stButton>button { height:36px; font-size:13px; }
-}
-@media screen and (max-width: 900px) {
-    .metric-card { padding:12px; }
-    .metric-value { font-size:18px; }
-    .metric-label { font-size:11px; }
-    div.stButton>button { height:32px; font-size:12px; }
-    .block-container { padding-left:0.5rem; padding-right:0.5rem; }
-}
-@media screen and (max-width: 600px) {
-    .metric-card { padding:8px; }
-    .metric-value { font-size:16px; }
-    .metric-label { font-size:10px; }
-    div.stButton>button { width:100%; font-size:11px; }
-}
 </style>
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
-
-# -------------------- 左侧栏 --------------------
-st.sidebar.header("📂 数据控制区")
-upload = st.sidebar.file_uploader("上传 Excel（Sheet 名称＝月份或季度）", type=["xlsx", "xls"])
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
@@ -117,15 +87,26 @@ def load_sheets(file) -> Tuple[List[str], dict]:
             frames[s] = df0
     return xpd.sheet_names, frames
 
+
+# -------------------- 文件读取逻辑 --------------------
 sheets, sheet_frames = [], {}
-if upload:
-    try:
-        sheets, sheet_frames = load_sheets(upload)
-    except Exception as e:
-        st.sidebar.error(f"读取失败：{e}")
+
+try:
+    # 🔹 优先加载仓库里的 jixiao.xlsx
+    sheets, sheet_frames = load_sheets("jixiao.xlsx")
+    st.sidebar.success("已加载仓库自带的 jixiao.xlsx")
+except Exception as e:
+    st.sidebar.warning(f"仓库文件读取失败：{e}")
+    upload = st.sidebar.file_uploader("上传 Excel（Sheet 名称＝月份或季度）", type=["xlsx", "xls"])
+    if upload:
+        try:
+            sheets, sheet_frames = load_sheets(upload)
+            st.sidebar.success("已加载上传文件")
+        except Exception as e2:
+            st.sidebar.error(f"上传文件读取失败：{e2}")
 
 if not sheets:
-    st.sidebar.info("未上传, 使用示例")
+    st.sidebar.info("未找到有效数据，使用示例")
     sheet_frames = {
         "示例": pd.DataFrame({
             "明细": ["任务A", "任务B", "任务C", "分数总和"],
@@ -136,6 +117,11 @@ if not sheets:
         })
     }
     sheets = ["示例"]
+
+# -------------------- 以下保持你原有的图表和展示逻辑 --------------------
+# （省略：chart_total, chart_stack, chart_bubble, chart_hot, chart_heat, show_cards ...）
+# 直接接上你之前的分析/图表代码部分就可以了
+
 
 # -------------------- 时间和分组选择 --------------------
 time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:3] if len(sheets) >= 3 else sheets)
