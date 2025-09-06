@@ -23,7 +23,7 @@ PAGE_CSS = """
     --bg2:#1b263b;
     --text:#fff;
     --muted:#ccc;
-}
+}z
 [data-testid="stAppViewContainer"]{
     background:var(--bg);
     color:var(--text);
@@ -65,6 +65,30 @@ hr{
     border:none;
     border-top:1px solid rgba(255,255,255,.12);
     margin:16px 0;
+}
+
+/* ----------- 分辨率自适应 ----------- */
+@media screen and (max-width: 1600px) {
+    .metric-value { font-size:28px; }
+    .metric-card { padding:16px; }
+}
+@media screen and (max-width: 1200px) {
+    .metric-value { font-size:22px; }
+    .metric-label { font-size:12px; }
+    div.stButton>button { height:36px; font-size:13px; }
+}
+@media screen and (max-width: 900px) {
+    .metric-card { padding:12px; }
+    .metric-value { font-size:18px; }
+    .metric-label { font-size:11px; }
+    div.stButton>button { height:32px; font-size:12px; }
+    .block-container { padding-left:0.5rem; padding-right:0.5rem; }
+}
+@media screen and (max-width: 600px) {
+    .metric-card { padding:8px; }
+    .metric-value { font-size:16px; }
+    .metric-label { font-size:10px; }
+    div.stButton>button { width:100%; font-size:11px; }
 }
 </style>
 """
