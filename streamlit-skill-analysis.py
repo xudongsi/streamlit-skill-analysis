@@ -65,12 +65,12 @@ SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
-def load_sheets(file) -> Tuple[List[str], dict]:
+def load_sheets(file, ts=None) -> Tuple[List[str], dict]:
     xpd = pd.ExcelFile(file)
     frames = {}
     for s in xpd.sheet_names:
         df0 = pd.read_excel(xpd, sheet_name=s)
-        if not df0.empty and df0.iloc[0, 0] == "分组":  # 第一行是分组信息
+        if not df0.empty and df0.iloc[0, 0] == "分组":
             groups = df0.iloc[0, 1:].tolist()
             df0 = df0.drop(0).reset_index(drop=True)
             emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
@@ -90,7 +90,8 @@ def load_sheets(file) -> Tuple[List[str], dict]:
 # -------------------- 文件读取逻辑 --------------------
 sheets, sheet_frames = [], {}
 try:
-    sheets, sheet_frames = load_sheets(SAVE_FILE)
+    mtime = os.path.getmtime(SAVE_FILE) if os.path.exists(SAVE_FILE) else None
+    sheets, sheet_frames = load_sheets(SAVE_FILE, ts=mtime)
     st.sidebar.success(f"已加载库文件 {SAVE_FILE}")
 except Exception as e:
     st.sidebar.warning(f"读取库文件失败：{e}")
@@ -121,7 +122,7 @@ if st.sidebar.button("创建新的时间点"):
                     pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
                         writer, sheet_name=new_sheet_name, index=False
                     )
-            st.cache_data.clear()  # 清缓存
+            st.cache_data.clear()
             st.sidebar.success(f"✅ 已在 {SAVE_FILE} 创建新时间点: {new_sheet_name}")
         except Exception as e:
             st.sidebar.error(f"创建失败：{e}")
@@ -245,7 +246,6 @@ def show_cards(df0):
     c4.markdown(f"<div class='metric-card'><div class='metric-value'>{avg_score}</div><div class='metric-label'>平均数</div></div>", unsafe_allow_html=True)
     st.markdown("<hr/>", unsafe_allow_html=True)
 
-
 # -------------------- 主页面 --------------------
 st.title("📊 技能覆盖分析大屏")
 
@@ -273,9 +273,6 @@ if view == "编辑数据":
             except Exception as e:
                 st.error(f"保存失败：{e}")
         st.dataframe(edited_df)
-
-# 其他 view ("大屏轮播", "单页模式", "显示所有视图", "能力分析") 部分保持不变
-
 
 elif view == "大屏轮播":
     if not time_choice:
