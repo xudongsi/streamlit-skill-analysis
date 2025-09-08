@@ -1,9 +1,10 @@
 # app.py
+import os
+import time
+from typing import List, Tuple
 
-import os, time, io
 import pandas as pd
 import streamlit as st
-from typing import List, Tuple
 from streamlit_autorefresh import st_autorefresh
 from streamlit_echarts import st_echarts
 import plotly.graph_objects as go
@@ -11,236 +12,308 @@ import plotly.graph_objects as go
 # -------------------- 页面配置 --------------------
 st.set_page_config(page_title="技能覆盖分析大屏", layout="wide")
 
-# -------------------- 数据读取 --------------------
-def load_excel_files(folder: str) -> dict:
-    data = {}
-    if not os.path.exists(folder):
-        return data
-    for file in os.listdir(folder):
-        if file.endswith(".xlsx"):
-            filepath = os.path.join(folder, file)
-            try:
-                xls = pd.ExcelFile(filepath)
-                for sheet in xls.sheet_names:
-                    df = xls.parse(sheet)
-                    data[(file, sheet)] = df
-            except Exception as e:
-                st.error(f"读取 {file} 出错: {e}")
-    return data
+# -------------------- 页面样式 --------------------
+PAGE_CSS = """
+<style>
+body, [data-testid="stAppViewContainer"]{
+    background-color:#0d1b2a !important;
+    color:#ffffff !important;
+}
+[data-testid="stSidebar"]{
+    background-color:#1b263b !important;
+    color:#ffffff !important;
+}
+div.stButton>button{
+    background-color:#4cc9f0 !important;
+    color:#000000 !important;
+    border-radius:10px;
+    height:40px;
+    font-weight:700;
+    margin:5px 0;
+    width:100%;
+}
+div.stButton>button:hover{
+    background-color:#4895ef !important;
+    color:#ffffff !important;
+}
+.metric-card{
+    background-color:#1b263b !important;
+    padding:20px;
+    border-radius:16px;
+    text-align:center;
+    box-shadow:0 0 15px rgba(0,0,0,0.4);
+}
+.metric-value{
+    font-size:36px;
+    font-weight:800;
+    color:#4cc9f0 !important;
+}
+.metric-label{
+    font-size:14px;
+    color:#cccccc !important;
+}
+hr{
+    border:none;
+    border-top:1px solid rgba(255,255,255,.12);
+    margin:16px 0;
+}
+</style>
+"""
+st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
-# -------------------- 数据处理 --------------------
-def get_merged_df(time_choice: List[str], groups: List[str]) -> pd.DataFrame:
-    if not time_choice or not groups:
-        return pd.DataFrame()
+SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
+# -------------------- 数据导入 --------------------
+@st.cache_data
+def load_sheets(file) -> Tuple[List[str], dict]:
+    xpd = pd.ExcelFile(file)
+    frames = {}
+    for s in xpd.sheet_names:
+        df0 = pd.read_excel(xpd, sheet_name=s)
+        if df0.iloc[0, 0] == "分组":  # 第一行是分组信息
+            groups = df0.iloc[0, 1:].tolist()
+            df0 = df0.drop(0).reset_index(drop=True)
+            emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
+            group_map = {emp: groups[i] if i < len(groups) else None for i, emp in enumerate(emp_cols)}
+            df_long = df0.melt(
+                id_vars=["明细", "数量总和"] if "数量总和" in df0.columns else ["明细"],
+                value_vars=emp_cols,
+                var_name="员工",
+                value_name="值"
+            )
+            df_long["分组"] = df_long["员工"].map(group_map)
+            frames[s] = df_long
+        else:
+            frames[s] = df0
+    return xpd.sheet_names, frames
+
+# -------------------- 文件读取逻辑 --------------------
+sheets, sheet_frames = [], {}
+try:
+    sheets, sheet_frames = load_sheets(SAVE_FILE)
+    st.sidebar.success(f"已加载库文件 {SAVE_FILE}")
+except Exception as e:
+    st.sidebar.warning(f"读取库文件失败：{e}")
+    sheet_frames = {
+        "示例": pd.DataFrame({
+            "明细": ["任务A", "任务B", "任务C"],
+            "数量总和": [3, 2, 5],
+            "员工": ["张三", "李四", "王五"],
+            "值": [1, 1, 1],
+            "分组": ["A8", "B7", "VN"]
+        })
+    }
+    sheets = ["示例"]
+
+# -------------------- 时间和分组选择 --------------------
+time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
+all_groups = pd.concat(sheet_frames.values())["分组"].dropna().unique().tolist()
+selected_groups = st.sidebar.multiselect("选择分组", all_groups, default=all_groups)
+
+sections_names = [
+    "人员完成任务数量排名",
+    "任务对比（堆叠柱状图）",
+    "人员对比（气泡图）",
+    "任务掌握情况（热门任务）",
+    "任务-人员热力图"
+]
+view = st.sidebar.radio("切换视图", ["编辑数据", "大屏轮播", "单页模式", "显示所有视图", "能力分析"])
+
+# -------------------- 数据合并 --------------------
+def get_merged_df(keys: List[str], groups: List[str]) -> pd.DataFrame:
     dfs = []
-    for (file, sheet), df in DATA.items():
-        if sheet in time_choice:
-            if "分组" in df.columns:
-                df = df[df["分组"].isin(groups)]
-            dfs.append(df)
-
+    for k in keys:
+        df0 = sheet_frames.get(k)
+        if df0 is not None:
+            if groups and "分组" in df0.columns:
+                df0 = df0[df0["分组"].isin(groups)]
+            dfs.append(df0)
     if not dfs:
         return pd.DataFrame()
-
-    merged = pd.concat(dfs, ignore_index=True)
-    return merged
-
-# -------------------- 视图函数 --------------------
-def show_cards(df: pd.DataFrame):
-    if df.empty:
-        return
-    total_tasks = df["明细"].nunique()
-    total_emps = df["员工"].nunique()
-    total_value = df["值"].sum()
-
-    cols = st.columns(3)
-    cols[0].metric("任务数", total_tasks)
-    cols[1].metric("员工数", total_emps)
-    cols[2].metric("总完成值", total_value)
-
-def chart_total(df: pd.DataFrame):
-    if df.empty:
-        return go.Figure()
-    df_sum = df.groupby("员工")["值"].sum().sort_values(ascending=False)
-    fig = go.Figure([go.Bar(x=df_sum.index, y=df_sum.values)])
-    fig.update_layout(title="人员完成任务数量排名", template="plotly_dark")
-    return fig
-
-def chart_stack(df: pd.DataFrame):
-    if df.empty:
-        return go.Figure()
-    df_pivot = df.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
-    fig = go.Figure()
-    for col in df_pivot.columns:
-        fig.add_bar(name=col, x=df_pivot.index, y=df_pivot[col])
-    fig.update_layout(barmode="stack", title="任务对比（堆叠柱状图）", template="plotly_dark")
-    return fig
-
-def chart_bubble(df: pd.DataFrame):
-    if df.empty:
-        return go.Figure()
-    df_sum = df.groupby(["员工", "明细"])["值"].sum().reset_index()
-    fig = go.Figure()
-    for emp in df_sum["员工"].unique():
-        d = df_sum[df_sum["员工"] == emp]
-        fig.add_trace(go.Scatter(x=d["明细"], y=d["值"], mode="markers", name=emp,
-                                 marker=dict(size=d["值"], sizemode="area", sizeref=2.*max(d["值"])/(40.**2))))
-    fig.update_layout(title="人员对比（气泡图）", template="plotly_dark")
-    return fig
-
-def chart_hot(df: pd.DataFrame):
-    if df.empty:
-        return go.Figure()
-    df_sum = df.groupby("明细")["值"].sum().sort_values(ascending=False).head(10)
-    fig = go.Figure([go.Bar(x=df_sum.index, y=df_sum.values)])
-    fig.update_layout(title="任务掌握情况（热门任务）", template="plotly_dark")
-    return fig
-
-def chart_heat(df: pd.DataFrame):
-    if df.empty:
-        return {}
-    df_pivot = df.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
-    data = []
-    for i, task in enumerate(df_pivot.index):
-        for j, emp in enumerate(df_pivot.columns):
-            data.append([j, i, df_pivot.loc[task, emp]])
-    option = {
-        "tooltip": {"position": "top"},
-        "xAxis": {"type": "category", "data": list(df_pivot.columns)},
-        "yAxis": {"type": "category", "data": list(df_pivot.index)},
-        "visualMap": {"min": 0, "max": int(df_pivot.values.max()), "calculable": True, "orient": "horizontal"},
-        "series": [{
-            "type": "heatmap",
-            "data": data,
-            "label": {"show": True}
-        }]
-    }
-    return option
-
-# -------------------- 主逻辑 --------------------
-DATA = load_excel_files("data")
-
-st.sidebar.title("📂 参数选择")
-time_choice = st.sidebar.multiselect("选择时间点", sorted({sheet for _, sheet in DATA.keys()}))
-groups = []
-if DATA:
-    sample_df = list(DATA.values())[0]
-    if "分组" in sample_df.columns:
-        groups = sample_df["分组"].unique().tolist()
-selected_groups = st.sidebar.multiselect("选择分组", groups)
+    return pd.concat(dfs, axis=0, ignore_index=True)
 
 df = get_merged_df(time_choice, selected_groups)
 
-view = st.sidebar.radio("选择视图模式", ["编辑数据", "大屏轮播", "单页模式", "显示所有视图", "能力分析"])
+# -------------------- 图表函数 --------------------
+def chart_total(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
+    fig = go.Figure(go.Bar(
+        x=emp_stats["员工"],
+        y=emp_stats["值"],
+        text=emp_stats["值"],
+        textposition="outside",
+        hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>"
+    ))
+    fig.update_layout(template="plotly_dark", xaxis_title="员工", yaxis_title="完成总值")
+    return fig
 
+def chart_stack(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
+    fig = go.Figure()
+    for emp in df_pivot.columns:
+        fig.add_trace(go.Bar(x=df_pivot.index, y=df_pivot[emp], name=emp))
+    fig.update_layout(barmode="stack", template="plotly_dark", xaxis_title="任务", yaxis_title="完成值")
+    return fig
+
+def chart_bubble(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    emp_stats = df0.groupby("员工").agg(
+        任务数=("明细","nunique"),
+        总值=("值","sum")
+    ).reset_index()
+    emp_stats["覆盖率"] = emp_stats["任务数"] / df0["明细"].nunique()
+    sizes = emp_stats["总值"].astype(float).tolist()
+    fig = go.Figure(data=[go.Scatter(
+        x=emp_stats["任务数"],
+        y=emp_stats["覆盖率"],
+        mode="markers+text",
+        text=emp_stats["员工"],
+        textposition="top center",
+        marker=dict(size=sizes, sizemode="area",
+                    sizeref=2.*max(sizes)/(40.**2),
+                    sizemin=8, color=emp_stats["总值"],
+                    colorscale="Viridis", showscale=True)
+    )])
+    fig.update_layout(template="plotly_dark", xaxis_title="任务数", yaxis_title="覆盖率")
+    return fig
+
+def chart_hot(df0):
+    ts = df0[df0["明细"] != "分数总和"].groupby("明细")["员工"].nunique()
+    return {
+        "backgroundColor":"transparent",
+        "yAxis":{"type":"category","data":ts.index.tolist(),"axisLabel":{"color":"#fff"}},
+        "xAxis":{"type":"value","axisLabel":{"color":"#fff"}},
+        "series":[{"data":ts.tolist(),"type":"bar","itemStyle":{"color":"#ffb703"}}]
+    }
+
+def chart_heat(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    tasks = df0["明细"].unique().tolist()
+    emps = df0["员工"].unique().tolist()
+    data=[]
+    for i,t in enumerate(tasks):
+        for j,e in enumerate(emps):
+            v=int(df0[(df0["明细"]==t)&(df0["员工"]==e)]["值"].sum())
+            data.append([j,i,v])
+    return {
+        "backgroundColor":"transparent",
+        "tooltip":{"position":"top"},
+        "xAxis":{"type":"category","data":emps,"axisLabel":{"color":"#fff"}},
+        "yAxis":{"type":"category","data":tasks,"axisLabel":{"color":"#fff"}},
+        "visualMap":{"min":0,"max":1,"show":False,"inRange":{"color":["#ff4d4d","#4caf50"]}},
+        "series":[{"type":"heatmap","data":data}]
+    }
+
+# -------------------- 卡片显示 --------------------
+def show_cards(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    total_tasks = df0["明细"].nunique()
+    total_people = df0["员工"].nunique()
+    ps = df0.groupby("员工")["值"].sum()
+    top_person = ps.idxmax() if not ps.empty else ""
+    avg_score = round(ps.mean(),1) if not ps.empty else 0
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.markdown(f"<div class='metric-card'><div class='metric-value'>{total_tasks}</div><div class='metric-label'>任务数</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-card'><div class='metric-value'>{total_people}</div><div class='metric-label'>人数</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-card'><div class='metric-value'>{top_person}</div><div class='metric-label'>覆盖率最高</div></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='metric-card'><div class='metric-value'>{avg_score}</div><div class='metric-label'>平均数</div></div>", unsafe_allow_html=True)
+    st.markdown("<hr/>", unsafe_allow_html=True)
+
+# -------------------- 主页面 --------------------
 st.title("📊 技能覆盖分析大屏")
 
-# -------- 统一拦截空数据 --------
-if df.empty:
-    st.warning("⚠️ 请选择对应窗口（时间点 / 分组）")
-else:
-    if view == "编辑数据":
-        show_cards(df)
-        st.dataframe(df)
+if view == "编辑数据":
+    show_cards(df)
+    st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
-    elif view == "大屏轮播":
-        st_autorefresh(interval=10000, key="aut")
-        show_cards(df)
-        secs = [
-            ("完成排名", chart_total(df)),
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+
+    if st.button("💾 保存修改到库里"):
+        try:
+            sheet_name = time_choice[0] if time_choice else "默认"
+            if os.path.exists(SAVE_FILE):
+                with pd.ExcelWriter(SAVE_FILE, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
+                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
+        except Exception as e:
+            st.error(f"保存失败：{e}")
+    st.dataframe(edited_df)
+
+elif view == "大屏轮播":
+    st_autorefresh(interval=10000, key="aut")
+    show_cards(df)
+    secs = [("完成排名", chart_total(df)),
             ("任务对比", chart_stack(df)),
             ("人员对比", chart_bubble(df)),
             ("热门任务", chart_hot(df)),
-            ("热力图", chart_heat(df))
-        ]
-        t, op = secs[int(time.time()/10) % len(secs)]
-        st.subheader(t)
-        if isinstance(op, go.Figure):
-            st.plotly_chart(op, use_container_width=True)
+            ("热力图", chart_heat(df))]
+    t, op = secs[int(time.time()/10) % len(secs)]
+    st.subheader(t)
+    if isinstance(op, go.Figure):
+        st.plotly_chart(op, use_container_width=True)
+    else:
+        st_echarts(op, height="600px", theme="dark")
+
+elif view == "单页模式":
+    show_cards(df)
+    choice = st.sidebar.selectbox("单页查看", sections_names, index=0)
+    mapping = {
+        "人员完成任务数量排名": chart_total(df),
+        "任务对比（堆叠柱状图）": chart_stack(df),
+        "人员对比（气泡图）": chart_bubble(df),
+        "任务掌握情况（热门任务）": chart_hot(df),
+        "任务-人员热力图": chart_heat(df)
+    }
+    chart_func = mapping.get(choice, chart_total(df))
+    if isinstance(chart_func, go.Figure):
+        st.plotly_chart(chart_func, use_container_width=True)
+    else:
+        st_echarts(chart_func, height="600px", theme="dark")
+
+elif view == "显示所有视图":
+    show_cards(df)
+    charts = [("完成排名", chart_total(df)),
+              ("任务对比（堆叠柱状图）", chart_stack(df)),
+              ("人员对比（气泡图）", chart_bubble(df)),
+              ("热门任务", chart_hot(df)),
+              ("热图", chart_heat(df))]
+    for label, f in charts:
+        st.subheader(label)
+        if isinstance(f, go.Figure):
+            st.plotly_chart(f, use_container_width=True)
         else:
-            st_echarts(op, height="600px", theme="dark")
+            st_echarts(f, height="520px", theme="dark")
 
-    elif view == "单页模式":
-        show_cards(df)
-        choice = st.sidebar.selectbox("单页查看", [
-            "人员完成任务数量排名",
-            "任务对比（堆叠柱状图）",
-            "人员对比（气泡图）",
-            "任务掌握情况（热门任务）",
-            "任务-人员热力图"
-        ], index=0)
-        st.subheader(choice)
-        mapping = {
-            "人员完成任务数量排名": chart_total(df),
-            "任务对比（堆叠柱状图）": chart_stack(df),
-            "人员对比（气泡图）": chart_bubble(df),
-            "任务掌握情况（热门任务）": chart_hot(df),
-            "任务-人员热力图": chart_heat(df)
-        }
-        chart_func = mapping.get(choice, chart_total(df))
-        if isinstance(chart_func, go.Figure):
-            st.plotly_chart(chart_func, use_container_width=True)
-        else:
-            st_echarts(chart_func, height="600px", theme="dark")
+elif view == "能力分析":
+    st.subheader("📊 能力分析")
+    employees = df["员工"].unique().tolist()
+    selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
+    tasks = df["明细"].unique().tolist()
 
-    elif view == "显示所有视图":
-        show_cards(df)
-        charts = [
-            ("完成排名", chart_total(df)),
-            ("任务对比（堆叠柱状图）", chart_stack(df)),
-            ("人员对比（气泡图）", chart_bubble(df)),
-            ("热门任务", chart_hot(df)),
-            ("热图", chart_heat(df))
-        ]
-        for label, f in charts:
-            st.subheader(label)
-            if isinstance(f, go.Figure):
-                st.plotly_chart(f, use_container_width=True)
-            else:
-                st_echarts(f, height="520px", theme="dark")
+    fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
+    for sheet in time_choice:
+        df_sheet = get_merged_df([sheet], selected_groups)
+        df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+        df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
-    elif view == "能力分析":
-        st.subheader("📊 能力分析")
-        employees = df["员工"].unique().tolist()
-        selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
-        tasks = df["明细"].unique().tolist()
+        for emp in selected_emps:
+            fig1.add_trace(go.Scatter(x=tasks, y=df_pivot[emp].reindex(tasks, fill_value=0),
+                                      mode="lines+markers", name=f"{sheet}-{emp}"))
+        fig2.add_trace(go.Scatter(x=tasks, y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
+                                  mode="lines+markers", name=sheet))
+        fig3.add_trace(go.Scatter(x=df_pivot.columns, y=df_pivot.sum(axis=0),
+                                  mode="lines+markers", name=sheet))
 
-        fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
-        for sheet in time_choice:
-            df_sheet = get_merged_df([sheet], selected_groups)
-            df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-            df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
+    fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
+    fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
+    fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
 
-            # 图1: 员工在任务上的表现
-            for emp in selected_emps:
-                fig1.add_trace(go.Scatter(
-                    x=tasks,
-                    y=df_pivot[emp].reindex(tasks, fill_value=0),
-                    mode="lines+markers",
-                    name=f"{sheet}-{emp}"
-                ))
-
-            # 图2: 各任务整体完成度趋势
-            fig2.add_trace(go.Scatter(
-                x=tasks,
-                y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
-                mode="lines+markers",
-                name=sheet
-            ))
-
-            # 图3: 各员工整体完成度
-            fig3.add_trace(go.Scatter(
-                x=df_pivot.columns,
-                y=df_pivot.sum(axis=0),
-                mode="lines+markers",
-                name=sheet
-            ))
-
-        fig1.update_layout(title="员工任务完成情况", xaxis_title="任务", yaxis_title="完成值", template="plotly_dark")
-        fig2.update_layout(title="任务整体完成度趋势", xaxis_title="任务", yaxis_title="总完成值", template="plotly_dark")
-        fig3.update_layout(title="员工整体完成度对比", xaxis_title="员工", yaxis_title="总完成值", template="plotly_dark")
-
-        st.plotly_chart(fig1, use_container_width=True)
-        st.plotly_chart(fig2, use_container_width=True)
-        st.plotly_chart(fig3, use_container_width=True)
+    st.plotly_chart(fig1, use_container_width=True)
+    st.plotly_chart(fig2, use_container_width=True)
+    st.plotly_chart(fig3, use_container_width=True)
