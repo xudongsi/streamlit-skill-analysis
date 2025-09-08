@@ -226,94 +226,109 @@ def show_cards(df0):
 st.title("📊 技能覆盖分析大屏")
 
 if view == "编辑数据":
-    show_cards(df)
-    st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
+    if not time_choice:
+        st.warning("⚠️ 请在左侧选择时间点（月或季）后再编辑数据")
+    else:
+        show_cards(df)
+        st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
-    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+        edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
 
-    if st.button("💾 保存修改到库里"):
-        try:
-            sheet_name = time_choice[0] if time_choice else "默认"
-            if os.path.exists(SAVE_FILE):
-                with pd.ExcelWriter(SAVE_FILE, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
-                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
-            else:
-                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
-                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
-            st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
-        except Exception as e:
-            st.error(f"保存失败：{e}")
-    st.dataframe(edited_df)
+        if st.button("💾 保存修改到库里"):
+            try:
+                sheet_name = time_choice[0]
+                if os.path.exists(SAVE_FILE):
+                    with pd.ExcelWriter(SAVE_FILE, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
+                        edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                else:
+                    with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                        edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
+            except Exception as e:
+                st.error(f"保存失败：{e}")
+        st.dataframe(edited_df)
 
 elif view == "大屏轮播":
-    st_autorefresh(interval=10000, key="aut")
-    show_cards(df)
-    secs = [("完成排名", chart_total(df)),
-            ("任务对比", chart_stack(df)),
-            ("人员对比", chart_bubble(df)),
-            ("热门任务", chart_hot(df)),
-            ("热力图", chart_heat(df))]
-    t, op = secs[int(time.time()/10) % len(secs)]
-    st.subheader(t)
-    if isinstance(op, go.Figure):
-        st.plotly_chart(op, use_container_width=True)
+    if not time_choice:
+        st.warning("⚠️ 请在左侧选择时间点（月或季）后查看大屏轮播")
     else:
-        st_echarts(op, height="600px", theme="dark")
+        st_autorefresh(interval=10000, key="aut")
+        show_cards(df)
+        secs = [("完成排名", chart_total(df)),
+                ("任务对比", chart_stack(df)),
+                ("人员对比", chart_bubble(df)),
+                ("热门任务", chart_hot(df)),
+                ("热力图", chart_heat(df))]
+        t, op = secs[int(time.time()/10) % len(secs)]
+        st.subheader(t)
+        if isinstance(op, go.Figure):
+            st.plotly_chart(op, use_container_width=True)
+        else:
+            st_echarts(op, height="600px", theme="dark")
 
 elif view == "单页模式":
-    show_cards(df)
-    choice = st.sidebar.selectbox("单页查看", sections_names, index=0)
-    mapping = {
-        "人员完成任务数量排名": chart_total(df),
-        "任务对比（堆叠柱状图）": chart_stack(df),
-        "人员对比（气泡图）": chart_bubble(df),
-        "任务掌握情况（热门任务）": chart_hot(df),
-        "任务-人员热力图": chart_heat(df)
-    }
-    chart_func = mapping.get(choice, chart_total(df))
-    if isinstance(chart_func, go.Figure):
-        st.plotly_chart(chart_func, use_container_width=True)
+    if not time_choice:
+        st.warning("⚠️ 请在左侧选择时间点（月或季）后查看单页模式")
     else:
-        st_echarts(chart_func, height="600px", theme="dark")
+        show_cards(df)
+        choice = st.sidebar.selectbox("单页查看", sections_names, index=0)
+        mapping = {
+            "人员完成任务数量排名": chart_total(df),
+            "任务对比（堆叠柱状图）": chart_stack(df),
+            "人员对比（气泡图）": chart_bubble(df),
+            "任务掌握情况（热门任务）": chart_hot(df),
+            "任务-人员热力图": chart_heat(df)
+        }
+        chart_func = mapping.get(choice, chart_total(df))
+        if isinstance(chart_func, go.Figure):
+            st.plotly_chart(chart_func, use_container_width=True)
+        else:
+            st_echarts(chart_func, height="600px", theme="dark")
 
 elif view == "显示所有视图":
-    show_cards(df)
-    charts = [("完成排名", chart_total(df)),
-              ("任务对比（堆叠柱状图）", chart_stack(df)),
-              ("人员对比（气泡图）", chart_bubble(df)),
-              ("热门任务", chart_hot(df)),
-              ("热图", chart_heat(df))]
-    for label, f in charts:
-        st.subheader(label)
-        if isinstance(f, go.Figure):
-            st.plotly_chart(f, use_container_width=True)
-        else:
-            st_echarts(f, height="520px", theme="dark")
+    if not time_choice:
+        st.warning("⚠️ 请在左侧选择时间点（月或季）后查看所有视图")
+    else:
+        show_cards(df)
+        charts = [("完成排名", chart_total(df)),
+                  ("任务对比（堆叠柱状图）", chart_stack(df)),
+                  ("人员对比（气泡图）", chart_bubble(df)),
+                  ("热门任务", chart_hot(df)),
+                  ("热图", chart_heat(df))]
+        for label, f in charts:
+            st.subheader(label)
+            if isinstance(f, go.Figure):
+                st.plotly_chart(f, use_container_width=True)
+            else:
+                st_echarts(f, height="520px", theme="dark")
 
 elif view == "能力分析":
-    st.subheader("📊 能力分析")
-    employees = df["员工"].unique().tolist()
-    selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
-    tasks = df["明细"].unique().tolist()
+    if not time_choice:
+        st.warning("⚠️ 请在左侧选择时间点（月或季）后查看能力分析")
+    else:
+        st.subheader("📊 能力分析")
+        employees = df["员工"].unique().tolist()
+        selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
+        tasks = df["明细"].unique().tolist()
 
-    fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
-    for sheet in time_choice:
-        df_sheet = get_merged_df([sheet], selected_groups)
-        df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-        df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
+        fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
+        for sheet in time_choice:
+            df_sheet = get_merged_df([sheet], selected_groups)
+            df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+            df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
-        for emp in selected_emps:
-            fig1.add_trace(go.Scatter(x=tasks, y=df_pivot[emp].reindex(tasks, fill_value=0),
-                                      mode="lines+markers", name=f"{sheet}-{emp}"))
-        fig2.add_trace(go.Scatter(x=tasks, y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
-                                  mode="lines+markers", name=sheet))
-        fig3.add_trace(go.Scatter(x=df_pivot.columns, y=df_pivot.sum(axis=0),
-                                  mode="lines+markers", name=sheet))
+            for emp in selected_emps:
+                fig1.add_trace(go.Scatter(x=tasks, y=df_pivot[emp].reindex(tasks, fill_value=0),
+                                          mode="lines+markers", name=f"{sheet}-{emp}"))
+            fig2.add_trace(go.Scatter(x=tasks, y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
+                                      mode="lines+markers", name=sheet))
+            fig3.add_trace(go.Scatter(x=df_pivot.columns, y=df_pivot.sum(axis=0),
+                                      mode="lines+markers", name=sheet))
 
-    fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
-    fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
-    fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
+        fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
+        fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
+        fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
 
-    st.plotly_chart(fig1, use_container_width=True)
-    st.plotly_chart(fig2, use_container_width=True)
-    st.plotly_chart(fig3, use_container_width=True)
+        st.plotly_chart(fig1, use_container_width=True)
+        st.plotly_chart(fig2, use_container_width=True)
+        st.plotly_chart(fig3, use_container_width=True)
