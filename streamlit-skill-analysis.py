@@ -70,7 +70,7 @@ def load_sheets(file) -> Tuple[List[str], dict]:
     frames = {}
     for s in xpd.sheet_names:
         df0 = pd.read_excel(xpd, sheet_name=s)
-        if not df0.empty and df0.iloc[0, 0] == "分组":  # 第一行是分组信息
+        if df0.iloc[0, 0] == "分组":  # 第一行是分组信息
             groups = df0.iloc[0, 1:].tolist()
             df0 = df0.drop(0).reset_index(drop=True)
             emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
@@ -105,29 +105,6 @@ except Exception as e:
     }
     sheets = ["示例"]
 
-# -------------------- ✅ 新增月份/季度 --------------------
-new_sheet_name = st.sidebar.text_input("➕ 新增时间点（月或季）")
-
-if st.sidebar.button("创建新的时间点"):
-    if new_sheet_name:
-        try:
-            if os.path.exists(SAVE_FILE):
-                with pd.ExcelWriter(SAVE_FILE, mode="a", engine="openpyxl") as writer:
-                    pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
-                        writer, sheet_name=new_sheet_name, index=False
-                    )
-            else:
-                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
-                    pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
-                        writer, sheet_name=new_sheet_name, index=False
-                    )
-            st.cache_data.clear()  # 清缓存
-            st.sidebar.success(f"✅ 已在 {SAVE_FILE} 创建新时间点: {new_sheet_name}")
-        except Exception as e:
-            st.sidebar.error(f"创建失败：{e}")
-    else:
-        st.sidebar.warning("请输入时间点名称后再点击创建")
-
 # -------------------- 时间和分组选择 --------------------
 time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
 all_groups = pd.concat(sheet_frames.values())["分组"].dropna().unique().tolist()
@@ -158,7 +135,92 @@ def get_merged_df(keys: List[str], groups: List[str]) -> pd.DataFrame:
 df = get_merged_df(time_choice, selected_groups)
 
 # -------------------- 图表函数 --------------------
-# ... 这里保持和你原来的一样（不动） ...
+def chart_total(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
+    fig = go.Figure(go.Bar(
+        x=emp_stats["员工"],
+        y=emp_stats["值"],
+        text=emp_stats["值"],
+        textposition="outside",
+        hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>"
+    ))
+    fig.update_layout(template="plotly_dark", xaxis_title="员工", yaxis_title="完成总值")
+    return fig
+
+def chart_stack(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
+    fig = go.Figure()
+    for emp in df_pivot.columns:
+        fig.add_trace(go.Bar(x=df_pivot.index, y=df_pivot[emp], name=emp))
+    fig.update_layout(barmode="stack", template="plotly_dark", xaxis_title="任务", yaxis_title="完成值")
+    return fig
+
+def chart_bubble(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    emp_stats = df0.groupby("员工").agg(
+        任务数=("明细","nunique"),
+        总值=("值","sum")
+    ).reset_index()
+    emp_stats["覆盖率"] = emp_stats["任务数"] / df0["明细"].nunique()
+    sizes = emp_stats["总值"].astype(float).tolist()
+    fig = go.Figure(data=[go.Scatter(
+        x=emp_stats["任务数"],
+        y=emp_stats["覆盖率"],
+        mode="markers+text",
+        text=emp_stats["员工"],
+        textposition="top center",
+        marker=dict(size=sizes, sizemode="area",
+                    sizeref=2.*max(sizes)/(40.**2),
+                    sizemin=8, color=emp_stats["总值"],
+                    colorscale="Viridis", showscale=True)
+    )])
+    fig.update_layout(template="plotly_dark", xaxis_title="任务数", yaxis_title="覆盖率")
+    return fig
+
+def chart_hot(df0):
+    ts = df0[df0["明细"] != "分数总和"].groupby("明细")["员工"].nunique()
+    return {
+        "backgroundColor":"transparent",
+        "yAxis":{"type":"category","data":ts.index.tolist(),"axisLabel":{"color":"#fff"}},
+        "xAxis":{"type":"value","axisLabel":{"color":"#fff"}},
+        "series":[{"data":ts.tolist(),"type":"bar","itemStyle":{"color":"#ffb703"}}]
+    }
+
+def chart_heat(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    tasks = df0["明细"].unique().tolist()
+    emps = df0["员工"].unique().tolist()
+    data=[]
+    for i,t in enumerate(tasks):
+        for j,e in enumerate(emps):
+            v=int(df0[(df0["明细"]==t)&(df0["员工"]==e)]["值"].sum())
+            data.append([j,i,v])
+    return {
+        "backgroundColor":"transparent",
+        "tooltip":{"position":"top"},
+        "xAxis":{"type":"category","data":emps,"axisLabel":{"color":"#fff"}},
+        "yAxis":{"type":"category","data":tasks,"axisLabel":{"color":"#fff"}},
+        "visualMap":{"min":0,"max":1,"show":False,"inRange":{"color":["#ff4d4d","#4caf50"]}},
+        "series":[{"type":"heatmap","data":data}]
+    }
+
+# -------------------- 卡片显示 --------------------
+def show_cards(df0):
+    df0 = df0[df0["明细"] != "分数总和"]
+    total_tasks = df0["明细"].nunique()
+    total_people = df0["员工"].nunique()
+    ps = df0.groupby("员工")["值"].sum()
+    top_person = ps.idxmax() if not ps.empty else ""
+    avg_score = round(ps.mean(),1) if not ps.empty else 0
+
+    c1,c2,c3,c4 = st.columns(4)
+    c1.markdown(f"<div class='metric-card'><div class='metric-value'>{total_tasks}</div><div class='metric-label'>任务数</div></div>", unsafe_allow_html=True)
+    c2.markdown(f"<div class='metric-card'><div class='metric-value'>{total_people}</div><div class='metric-label'>人数</div></div>", unsafe_allow_html=True)
+    c3.markdown(f"<div class='metric-card'><div class='metric-value'>{top_person}</div><div class='metric-label'>覆盖率最高</div></div>", unsafe_allow_html=True)
+    c4.markdown(f"<div class='metric-card'><div class='metric-value'>{avg_score}</div><div class='metric-label'>平均数</div></div>", unsafe_allow_html=True)
+    st.markdown("<hr/>", unsafe_allow_html=True)
 
 # -------------------- 主页面 --------------------
 st.title("📊 技能覆盖分析大屏")
@@ -167,7 +229,6 @@ if view == "编辑数据":
     if not time_choice:
         st.warning("⚠️ 请在左侧选择时间点（月或季）后再编辑数据")
     else:
-        # 卡片
         show_cards(df)
         st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
@@ -182,13 +243,10 @@ if view == "编辑数据":
                 else:
                     with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
                         edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                st.cache_data.clear()   # ✅ 保存后清缓存
                 st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
             except Exception as e:
                 st.error(f"保存失败：{e}")
         st.dataframe(edited_df)
-
-# 其他 view ("大屏轮播", "单页模式", "显示所有视图", "能力分析") 部分保持不变
 
 elif view == "大屏轮播":
     if not time_choice:
