@@ -66,17 +66,28 @@ SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 # -------------------- 数据导入 --------------------
 @st.cache_data
 def load_sheets(file) -> Tuple[List[str], dict]:
-    xpd = pd.ExcelFile(file)
+    xpd = pd.ExcelFile(file, engine="openpyxl")
     frames = {}
     for s in xpd.sheet_names:
-        df0 = pd.read_excel(xpd, sheet_name=s)
+        df0 = pd.read_excel(xpd, sheet_name=s, engine="openpyxl")
         if not df0.empty and df0.iloc[0, 0] == "分组":  # 第一行是分组信息
+            col_names = list(df0.columns)
             groups = df0.iloc[0, 1:].tolist()
             df0 = df0.drop(0).reset_index(drop=True)
-            emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
-            group_map = {emp: groups[i] if i < len(groups) else None for i, emp in enumerate(emp_cols)}
+
+            emp_cols = [c for c in col_names if c not in ["明细", "数量总和", "编号"]]
+
+            group_map = {}
+            for emp in emp_cols:
+                try:
+                    pos = col_names.index(emp)
+                    group_map[emp] = groups[pos - 1] if (pos - 1) < len(groups) and pos - 1 >= 0 else None
+                except ValueError:
+                    group_map[emp] = None
+
+            id_vars = ["明细"] + (["数量总和"] if "数量总和" in df0.columns else [])
             df_long = df0.melt(
-                id_vars=["明细", "数量总和"] if "数量总和" in df0.columns else ["明细"],
+                id_vars=id_vars,
                 value_vars=emp_cols,
                 var_name="员工",
                 value_name="值"
@@ -86,6 +97,7 @@ def load_sheets(file) -> Tuple[List[str], dict]:
         else:
             frames[s] = df0
     return xpd.sheet_names, frames
+
 
 # -------------------- 文件读取逻辑 --------------------
 sheets, sheet_frames = [], {}
@@ -106,7 +118,6 @@ except Exception as e:
     sheets = ["示例"]
 
 # -------------------- ✅ 新增月份/季度 --------------------
-
 new_sheet_name = st.sidebar.text_input("➕ 新增时间点（月或季）")
 
 if st.sidebar.button("创建新的时间点"):
@@ -122,13 +133,12 @@ if st.sidebar.button("创建新的时间点"):
                     pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
                         writer, sheet_name=new_sheet_name, index=False
                     )
-            st.cache_data.clear()  # 清缓存
+            st.cache_data.clear()
             st.sidebar.success(f"✅ 已在 {SAVE_FILE} 创建新时间点: {new_sheet_name}")
         except Exception as e:
             st.sidebar.error(f"创建失败：{e}")
     else:
         st.sidebar.warning("请输入时间点名称后再点击创建")
-
 
 
 # -------------------- 🗑️ 删除月份/季度 --------------------
@@ -138,30 +148,37 @@ if st.sidebar.button("删除所选时间点"):
     if del_sheet_name:
         try:
             xls = pd.ExcelFile(SAVE_FILE, engine="openpyxl")
-
-            # 保留下来的 sheet（排除要删的）
             keep_sheets = [s for s in xls.sheet_names if s != del_sheet_name]
 
             if not keep_sheets:
                 st.sidebar.warning("⚠️ 至少要保留一个时间点，不能全部删除")
             else:
-                # 重新写入 Excel，确保文件结构干净
+                # 先读入保留的 sheet
+                keep_dfs = {}
+                for s in keep_sheets:
+                    keep_dfs[s] = pd.read_excel(SAVE_FILE, sheet_name=s, engine="openpyxl")
+
+                # 再写入（覆盖原文件）
                 with pd.ExcelWriter(SAVE_FILE, engine="openpyxl", mode="w") as writer:
-                    for s in keep_sheets:
-                        df_tmp = pd.read_excel(SAVE_FILE, sheet_name=s, engine="openpyxl")
+                    for s, df_tmp in keep_dfs.items():
                         df_tmp.to_excel(writer, sheet_name=s, index=False)
 
                 st.cache_data.clear()
                 st.sidebar.success(f"✅ 已删除时间点: {del_sheet_name}")
-
         except Exception as e:
             st.sidebar.error(f"删除失败：{e}")
 
 
-
 # -------------------- 时间和分组选择 --------------------
 time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
-all_groups = pd.concat(sheet_frames.values())["分组"].dropna().unique().tolist()
+
+def collect_all_groups(sheet_frames):
+    dfs_with_group = [df for df in sheet_frames.values() if isinstance(df, pd.DataFrame) and "分组" in df.columns]
+    if not dfs_with_group:
+        return []
+    return pd.concat(dfs_with_group, axis=0, ignore_index=True)["分组"].dropna().unique().tolist()
+
+all_groups = collect_all_groups(sheet_frames)
 selected_groups = st.sidebar.multiselect("选择分组", all_groups, default=all_groups)
 
 sections_names = [
@@ -190,6 +207,8 @@ df = get_merged_df(time_choice, selected_groups)
 
 # -------------------- 图表函数 --------------------
 def chart_total(df0):
+    if not {"员工", "值"}.issubset(df0.columns):
+        return go.Figure()
     df0 = df0[df0["明细"] != "分数总和"]
     emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
     fig = go.Figure(go.Bar(
@@ -203,6 +222,8 @@ def chart_total(df0):
     return fig
 
 def chart_stack(df0):
+    if not {"员工", "明细", "值"}.issubset(df0.columns):
+        return go.Figure()
     df0 = df0[df0["明细"] != "分数总和"]
     df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
     fig = go.Figure()
@@ -212,6 +233,8 @@ def chart_stack(df0):
     return fig
 
 def chart_bubble(df0):
+    if not {"员工", "明细", "值"}.issubset(df0.columns):
+        return go.Figure()
     df0 = df0[df0["明细"] != "分数总和"]
     emp_stats = df0.groupby("员工").agg(
         任务数=("明细","nunique"),
@@ -219,6 +242,8 @@ def chart_bubble(df0):
     ).reset_index()
     emp_stats["覆盖率"] = emp_stats["任务数"] / df0["明细"].nunique()
     sizes = emp_stats["总值"].astype(float).tolist()
+    if not sizes:
+        return go.Figure()
     fig = go.Figure(data=[go.Scatter(
         x=emp_stats["任务数"],
         y=emp_stats["覆盖率"],
@@ -234,6 +259,8 @@ def chart_bubble(df0):
     return fig
 
 def chart_hot(df0):
+    if not {"员工", "明细"}.issubset(df0.columns):
+        return {}
     ts = df0[df0["明细"] != "分数总和"].groupby("明细")["员工"].nunique()
     return {
         "backgroundColor":"transparent",
@@ -243,6 +270,8 @@ def chart_hot(df0):
     }
 
 def chart_heat(df0):
+    if not {"员工", "明细", "值"}.issubset(df0.columns):
+        return {}
     df0 = df0[df0["明细"] != "分数总和"]
     tasks = df0["明细"].unique().tolist()
     emps = df0["员工"].unique().tolist()
@@ -262,6 +291,8 @@ def chart_heat(df0):
 
 # -------------------- 卡片显示 --------------------
 def show_cards(df0):
+    if not {"员工", "明细", "值"}.issubset(df0.columns):
+        return
     df0 = df0[df0["明细"] != "分数总和"]
     total_tasks = df0["明细"].nunique()
     total_people = df0["员工"].nunique()
@@ -284,7 +315,6 @@ if view == "编辑数据":
     if not time_choice:
         st.warning("⚠️ 请在左侧选择时间点（月或季）后再编辑数据")
     else:
-        # 卡片
         show_cards(df)
         st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
@@ -293,19 +323,23 @@ if view == "编辑数据":
         if st.button("💾 保存修改到库里"):
             try:
                 sheet_name = time_choice[0]
+                tmp_file = SAVE_FILE + ".tmp.xlsx"
+                existing = {}
                 if os.path.exists(SAVE_FILE):
-                    with pd.ExcelWriter(SAVE_FILE, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
-                        edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                else:
-                    with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
-                        edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
-                st.cache_data.clear()   # ✅ 保存后清缓存
+                    xls = pd.ExcelFile(SAVE_FILE, engine="openpyxl")
+                    for s in xls.sheet_names:
+                        if s != sheet_name:
+                            existing[s] = pd.read_excel(SAVE_FILE, sheet_name=s, engine="openpyxl")
+                with pd.ExcelWriter(tmp_file, engine="openpyxl", mode="w") as writer:
+                    for s, df_s in existing.items():
+                        df_s.to_excel(writer, sheet_name=s, index=False)
+                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                os.replace(tmp_file, SAVE_FILE)
+                st.cache_data.clear()
                 st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
             except Exception as e:
                 st.error(f"保存失败：{e}")
         st.dataframe(edited_df)
-
-
 
 elif view == "大屏轮播":
     if not time_choice:
@@ -364,64 +398,19 @@ elif view == "显示所有视图":
 elif view == "能力分析":
     if not time_choice:
         st.warning("⚠️ 请在左侧选择时间点（月或季）后查看能力分析")
-    else:
-        # 🛡️ 防护：如果 df 里没有必要列，直接提示退出
-        if "员工" not in df.columns or "明细" not in df.columns:
-            st.warning("⚠️ 当前选择的数据缺少 '员工' 或 '明细' 列，无法进行能力分析")
-        else:
-            st.subheader("📊 能力分析")
-            employees = df["员工"].unique().tolist()
-            selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
-            tasks = df["明细"].unique().tolist()
+else:
+    show_cards(df)
+    if "值" in df.columns and "员工" in df.columns:
+        st.subheader("📈 分数分布情况")
+        score = df.groupby("员工")["值"].sum()
+        fig = go.Figure()
+        fig.add_trace(go.Histogram(x=score, nbinsx=10, name="分数分布"))
+        fig.update_layout(template="plotly_dark", xaxis_title="分数", yaxis_title="人数")
+        st.plotly_chart(fig, use_container_width=True)
 
-            fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
-            for sheet in time_choice:
-                df_sheet = get_merged_df([sheet], selected_groups)
-
-                # 检查每个 sheet
-                if "明细" not in df_sheet.columns or "员工" not in df_sheet.columns:
-                    st.warning(f"⚠️ {sheet} 缺少必要列（明细/员工），已跳过")
-                    continue
-
-                df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-                if df_sheet.empty:
-                    st.info(f"ℹ️ {sheet} 没有数据，已跳过")
-                    continue
-
-                df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
-
-                # 绘制员工任务完成情况
-                for emp in selected_emps:
-                    if emp not in df_pivot.columns:
-                        continue
-                    fig1.add_trace(go.Scatter(
-                        x=tasks,
-                        y=df_pivot[emp].reindex(tasks, fill_value=0),
-                        mode="lines+markers",
-                        name=f"{sheet}-{emp}"
-                    ))
-
-                # 绘制任务整体完成度趋势
-                fig2.add_trace(go.Scatter(
-                    x=tasks,
-                    y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
-                    mode="lines+markers",
-                    name=sheet
-                ))
-
-                # 绘制员工整体完成度对比
-                fig3.add_trace(go.Scatter(
-                    x=df_pivot.columns,
-                    y=df_pivot.sum(axis=0),
-                    mode="lines+markers",
-                    name=sheet
-                ))
-
-            # 布局
-            fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
-            fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
-            fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
-
-            st.plotly_chart(fig1, use_container_width=True)
-            st.plotly_chart(fig2, use_container_width=True)
-            st.plotly_chart(fig3, use_container_width=True)
+    if "分组" in df.columns and "员工" in df.columns:
+        st.subheader("📊 分组人数")
+        grp = df.groupby("分组")["员工"].nunique()
+        fig = go.Figure(go.Bar(x=grp.index, y=grp.values, text=grp.values, textposition="outside"))
+        fig.update_layout(template="plotly_dark", xaxis_title="分组", yaxis_title="人数")
+        st.plotly_chart(fig, use_container_width=True)
