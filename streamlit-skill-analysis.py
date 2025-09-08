@@ -139,16 +139,16 @@ if st.sidebar.button("删除所选时间点"):
         try:
             xls = pd.ExcelFile(SAVE_FILE, engine="openpyxl")
 
-            # 需要保留的 sheet（排除要删除的）
+            # 保留下来的 sheet（排除要删的）
             keep_sheets = [s for s in xls.sheet_names if s != del_sheet_name]
 
             if not keep_sheets:
                 st.sidebar.warning("⚠️ 至少要保留一个时间点，不能全部删除")
             else:
-                # 重新写入文件：只写保留的 sheet
-                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                # 重新写入 Excel，确保文件结构干净
+                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl", mode="w") as writer:
                     for s in keep_sheets:
-                        df_tmp = pd.read_excel(xls, sheet_name=s, engine="openpyxl")
+                        df_tmp = pd.read_excel(SAVE_FILE, sheet_name=s, engine="openpyxl")
                         df_tmp.to_excel(writer, sheet_name=s, index=False)
 
                 st.cache_data.clear()
@@ -425,4 +425,3 @@ elif view == "能力分析":
             st.plotly_chart(fig1, use_container_width=True)
             st.plotly_chart(fig2, use_container_width=True)
             st.plotly_chart(fig3, use_container_width=True)
-
