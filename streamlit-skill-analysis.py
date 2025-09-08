@@ -106,7 +106,7 @@ except Exception as e:
     sheets = ["示例"]
 
 # -------------------- ✅ 新增月份/季度 --------------------
-# -------------------- ✅ 新增月份/季度 --------------------
+
 new_sheet_name = st.sidebar.text_input("➕ 新增时间点（月或季）")
 
 if st.sidebar.button("创建新的时间点"):
@@ -129,14 +129,15 @@ if st.sidebar.button("创建新的时间点"):
     else:
         st.sidebar.warning("请输入时间点名称后再点击创建")
 
-# -------------------- 🗑️ 删除月份/季度 --------------------
 
+
+# -------------------- 🗑️ 删除月份/季度 --------------------
 del_sheet_name = st.sidebar.selectbox("🗑️ 选择要删除的时间点", sheets)
 
 if st.sidebar.button("删除所选时间点"):
     if del_sheet_name:
         try:
-            xls = pd.ExcelFile(SAVE_FILE)
+            xls = pd.ExcelFile(SAVE_FILE, engine="openpyxl")
 
             # 需要保留的 sheet（排除要删除的）
             keep_sheets = [s for s in xls.sheet_names if s != del_sheet_name]
@@ -144,13 +145,12 @@ if st.sidebar.button("删除所选时间点"):
             if not keep_sheets:
                 st.sidebar.warning("⚠️ 至少要保留一个时间点，不能全部删除")
             else:
-                # 重新写入文件：只写保留的 sheet，避免 openpyxl 先清空
+                # 重新写入文件：只写保留的 sheet
                 with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
                     for s in keep_sheets:
-                        df_tmp = pd.read_excel(xls, sheet_name=s)
+                        df_tmp = pd.read_excel(xls, sheet_name=s, engine="openpyxl")
                         df_tmp.to_excel(writer, sheet_name=s, index=False)
 
-                # 清理缓存，刷新显示
                 st.cache_data.clear()
                 st.sidebar.success(f"✅ 已删除时间点: {del_sheet_name}")
 
