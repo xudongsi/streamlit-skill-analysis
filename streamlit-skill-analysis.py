@@ -1,5 +1,4 @@
 # app.py
-
 import os
 import time
 from typing import List, Tuple
@@ -62,6 +61,7 @@ hr{
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
+SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
@@ -87,44 +87,26 @@ def load_sheets(file) -> Tuple[List[str], dict]:
             frames[s] = df0
     return xpd.sheet_names, frames
 
-
 # -------------------- 文件读取逻辑 --------------------
 sheets, sheet_frames = [], {}
-
 try:
-    # 🔹 优先加载仓库里的 jixiao.xlsx
-    sheets, sheet_frames = load_sheets("jixiao.xlsx")
-    st.sidebar.success("已加载仓库自带的 jixiao.xlsx")
+    sheets, sheet_frames = load_sheets(SAVE_FILE)
+    st.sidebar.success(f"已加载库文件 {SAVE_FILE}")
 except Exception as e:
-    st.sidebar.warning(f"仓库文件读取失败：{e}")
-    upload = st.sidebar.file_uploader("上传 Excel（Sheet 名称＝月份或季度）", type=["xlsx", "xls"])
-    if upload:
-        try:
-            sheets, sheet_frames = load_sheets(upload)
-            st.sidebar.success("已加载上传文件")
-        except Exception as e2:
-            st.sidebar.error(f"上传文件读取失败：{e2}")
-
-if not sheets:
-    st.sidebar.info("未找到有效数据，使用示例")
+    st.sidebar.warning(f"读取库文件失败：{e}")
     sheet_frames = {
         "示例": pd.DataFrame({
-            "明细": ["任务A", "任务B", "任务C", "分数总和"],
-            "数量总和": [3, 2, 5, 10],
-            "员工": ["张三", "李四", "王五", ""],
-            "值": [1, 1, 1, 0],
-            "分组": ["A8", "B7", "VN", ""]
+            "明细": ["任务A", "任务B", "任务C"],
+            "数量总和": [3, 2, 5],
+            "员工": ["张三", "李四", "王五"],
+            "值": [1, 1, 1],
+            "分组": ["A8", "B7", "VN"]
         })
     }
     sheets = ["示例"]
 
-# -------------------- 以下保持你原有的图表和展示逻辑 --------------------
-# （省略：chart_total, chart_stack, chart_bubble, chart_hot, chart_heat, show_cards ...）
-# 直接接上你之前的分析/图表代码部分就可以了
-
-
 # -------------------- 时间和分组选择 --------------------
-time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:3] if len(sheets) >= 3 else sheets)
+time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
 all_groups = pd.concat(sheet_frames.values())["分组"].dropna().unique().tolist()
 selected_groups = st.sidebar.multiselect("选择分组", all_groups, default=all_groups)
 
@@ -171,12 +153,7 @@ def chart_stack(df0):
     df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
     fig = go.Figure()
     for emp in df_pivot.columns:
-        fig.add_trace(go.Bar(
-            x=df_pivot.index,
-            y=df_pivot[emp],
-            name=emp,
-            hovertemplate="任务: %{x}<br>员工: " + emp + "<br>完成值: %{y}<extra></extra>"
-        ))
+        fig.add_trace(go.Bar(x=df_pivot.index, y=df_pivot[emp], name=emp))
     fig.update_layout(barmode="stack", template="plotly_dark", xaxis_title="任务", yaxis_title="完成值")
     return fig
 
@@ -194,23 +171,16 @@ def chart_bubble(df0):
         mode="markers+text",
         text=emp_stats["员工"],
         textposition="top center",
-        hovertemplate="员工: %{text}<br>任务数: %{x}<br>覆盖率: %{y:.2%}<br>总值: %{marker.size}",
-        marker=dict(
-            size=sizes,
-            sizemode="area",
-            sizeref=2.*max(sizes)/(40.**2),
-            sizemin=8,
-            color=emp_stats["总值"],
-            colorscale="Viridis",
-            showscale=True
-        )
+        marker=dict(size=sizes, sizemode="area",
+                    sizeref=2.*max(sizes)/(40.**2),
+                    sizemin=8, color=emp_stats["总值"],
+                    colorscale="Viridis", showscale=True)
     )])
     fig.update_layout(template="plotly_dark", xaxis_title="任务数", yaxis_title="覆盖率")
     return fig
 
 def chart_hot(df0):
-    df0 = df0[df0["明细"] != "分数总和"]
-    ts = df0.groupby("明细")["员工"].nunique()
+    ts = df0[df0["明细"] != "分数总和"].groupby("明细")["员工"].nunique()
     return {
         "backgroundColor":"transparent",
         "yAxis":{"type":"category","data":ts.index.tolist(),"axisLabel":{"color":"#fff"}},
@@ -257,18 +227,32 @@ st.title("📊 技能覆盖分析大屏")
 
 if view == "编辑数据":
     show_cards(df)
-    st.dataframe(df)
+    st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
+
+    edited_df = st.data_editor(df, num_rows="dynamic", use_container_width=True)
+
+    if st.button("💾 保存修改到库里"):
+        try:
+            sheet_name = time_choice[0] if time_choice else "默认"
+            if os.path.exists(SAVE_FILE):
+                with pd.ExcelWriter(SAVE_FILE, mode="a", if_sheet_exists="replace", engine="openpyxl") as writer:
+                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            else:
+                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                    edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+            st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
+        except Exception as e:
+            st.error(f"保存失败：{e}")
+    st.dataframe(edited_df)
 
 elif view == "大屏轮播":
     st_autorefresh(interval=10000, key="aut")
     show_cards(df)
-    secs = [
-        ("完成排名", chart_total(df)),
-        ("任务对比", chart_stack(df)),
-        ("人员对比", chart_bubble(df)),
-        ("热门任务", chart_hot(df)),
-        ("热力图", chart_heat(df))
-    ]
+    secs = [("完成排名", chart_total(df)),
+            ("任务对比", chart_stack(df)),
+            ("人员对比", chart_bubble(df)),
+            ("热门任务", chart_hot(df)),
+            ("热力图", chart_heat(df))]
     t, op = secs[int(time.time()/10) % len(secs)]
     st.subheader(t)
     if isinstance(op, go.Figure):
@@ -279,7 +263,6 @@ elif view == "大屏轮播":
 elif view == "单页模式":
     show_cards(df)
     choice = st.sidebar.selectbox("单页查看", sections_names, index=0)
-    st.subheader(choice)
     mapping = {
         "人员完成任务数量排名": chart_total(df),
         "任务对比（堆叠柱状图）": chart_stack(df),
@@ -295,13 +278,11 @@ elif view == "单页模式":
 
 elif view == "显示所有视图":
     show_cards(df)
-    charts = [
-        ("完成排名", chart_total(df)),
-        ("任务对比（堆叠柱状图）", chart_stack(df)),
-        ("人员对比（气泡图）", chart_bubble(df)),
-        ("热门任务", chart_hot(df)),
-        ("热图", chart_heat(df))
-    ]
+    charts = [("完成排名", chart_total(df)),
+              ("任务对比（堆叠柱状图）", chart_stack(df)),
+              ("人员对比（气泡图）", chart_bubble(df)),
+              ("热门任务", chart_hot(df)),
+              ("热图", chart_heat(df))]
     for label, f in charts:
         st.subheader(label)
         if isinstance(f, go.Figure):
@@ -321,34 +302,17 @@ elif view == "能力分析":
         df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
         df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
-        # 图1: 员工在任务上的表现
         for emp in selected_emps:
-            fig1.add_trace(go.Scatter(
-                x=tasks,
-                y=df_pivot[emp].reindex(tasks, fill_value=0),
-                mode="lines+markers",
-                name=f"{sheet}-{emp}"
-            ))
+            fig1.add_trace(go.Scatter(x=tasks, y=df_pivot[emp].reindex(tasks, fill_value=0),
+                                      mode="lines+markers", name=f"{sheet}-{emp}"))
+        fig2.add_trace(go.Scatter(x=tasks, y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
+                                  mode="lines+markers", name=sheet))
+        fig3.add_trace(go.Scatter(x=df_pivot.columns, y=df_pivot.sum(axis=0),
+                                  mode="lines+markers", name=sheet))
 
-        # 图2: 各任务整体完成度趋势
-        fig2.add_trace(go.Scatter(
-            x=tasks,
-            y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
-            mode="lines+markers",
-            name=sheet
-        ))
-
-        # 图3: 各员工整体完成度
-        fig3.add_trace(go.Scatter(
-            x=df_pivot.columns,
-            y=df_pivot.sum(axis=0),
-            mode="lines+markers",
-            name=sheet
-        ))
-
-    fig1.update_layout(title="员工任务完成情况", xaxis_title="任务", yaxis_title="完成值", template="plotly_dark")
-    fig2.update_layout(title="任务整体完成度趋势", xaxis_title="任务", yaxis_title="总完成值", template="plotly_dark")
-    fig3.update_layout(title="员工整体完成度对比", xaxis_title="员工", yaxis_title="总完成值", template="plotly_dark")
+    fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
+    fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
+    fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
 
     st.plotly_chart(fig1, use_container_width=True)
     st.plotly_chart(fig2, use_container_width=True)
