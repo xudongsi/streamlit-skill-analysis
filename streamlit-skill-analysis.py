@@ -106,6 +106,7 @@ except Exception as e:
     sheets = ["示例"]
 
 # -------------------- ✅ 新增月份/季度 --------------------
+# -------------------- ✅ 新增月份/季度 --------------------
 new_sheet_name = st.sidebar.text_input("➕ 新增时间点（月或季）")
 
 if st.sidebar.button("创建新的时间点"):
@@ -127,6 +128,26 @@ if st.sidebar.button("创建新的时间点"):
             st.sidebar.error(f"创建失败：{e}")
     else:
         st.sidebar.warning("请输入时间点名称后再点击创建")
+
+# -------------------- 🗑️ 删除月份/季度 --------------------
+del_sheet_name = st.sidebar.selectbox("🗑️ 选择要删除的时间点", sheets)
+
+if st.sidebar.button("删除所选时间点"):
+    if del_sheet_name:
+        try:
+            # 读取整个文件
+            xls = pd.ExcelFile(SAVE_FILE)
+            # 把其他 sheet 保存回去（排除要删除的）
+            with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                for s in xls.sheet_names:
+                    if s != del_sheet_name:
+                        df_tmp = pd.read_excel(xls, sheet_name=s)
+                        df_tmp.to_excel(writer, sheet_name=s, index=False)
+            st.cache_data.clear()
+            st.sidebar.success(f"✅ 已删除时间点: {del_sheet_name}")
+        except Exception as e:
+            st.sidebar.error(f"删除失败：{e}")
+
 
 # -------------------- 时间和分组选择 --------------------
 time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
