@@ -274,7 +274,6 @@ if view == "编辑数据":
                 st.error(f"保存失败：{e}")
         st.dataframe(edited_df)
 
-# 其他 view ("大屏轮播", "单页模式", "显示所有视图", "能力分析") 部分保持不变
 
 
 elif view == "大屏轮播":
@@ -343,17 +342,45 @@ elif view == "能力分析":
         fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
         for sheet in time_choice:
             df_sheet = get_merged_df([sheet], selected_groups)
+
+            # 1️⃣ 基础检查，避免 KeyError
+            if "明细" not in df_sheet.columns or "员工" not in df_sheet.columns:
+                st.warning(f"⚠️ {sheet} 缺少必要列（明细/员工），已跳过")
+                continue
+
             df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+            if df_sheet.empty:
+                st.info(f"ℹ️ {sheet} 没有数据，已跳过")
+                continue
+
             df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
+            # 2️⃣ 每个员工在当前 sheet 是否存在
             for emp in selected_emps:
-                fig1.add_trace(go.Scatter(x=tasks, y=df_pivot[emp].reindex(tasks, fill_value=0),
-                                          mode="lines+markers", name=f"{sheet}-{emp}"))
-            fig2.add_trace(go.Scatter(x=tasks, y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
-                                      mode="lines+markers", name=sheet))
-            fig3.add_trace(go.Scatter(x=df_pivot.columns, y=df_pivot.sum(axis=0),
-                                      mode="lines+markers", name=sheet))
+                if emp not in df_pivot.columns:
+                    continue  # 这个月没有该员工，跳过
+                fig1.add_trace(go.Scatter(
+                    x=tasks,
+                    y=df_pivot[emp].reindex(tasks, fill_value=0),
+                    mode="lines+markers",
+                    name=f"{sheet}-{emp}"
+                ))
 
+            fig2.add_trace(go.Scatter(
+                x=tasks,
+                y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
+                mode="lines+markers",
+                name=sheet
+            ))
+
+            fig3.add_trace(go.Scatter(
+                x=df_pivot.columns,
+                y=df_pivot.sum(axis=0),
+                mode="lines+markers",
+                name=sheet
+            ))
+
+        # 图表美化
         fig1.update_layout(title="员工任务完成情况", template="plotly_dark")
         fig2.update_layout(title="任务整体完成度趋势", template="plotly_dark")
         fig3.update_layout(title="员工整体完成度对比", template="plotly_dark")
