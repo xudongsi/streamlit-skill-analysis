@@ -70,7 +70,7 @@ def load_sheets(file) -> Tuple[List[str], dict]:
     frames = {}
     for s in xpd.sheet_names:
         df0 = pd.read_excel(xpd, sheet_name=s)
-        if df0.iloc[0, 0] == "分组":  # 第一行是分组信息
+        if not df0.empty and df0.iloc[0, 0] == "分组":  # 第一行是分组信息
             groups = df0.iloc[0, 1:].tolist()
             df0 = df0.drop(0).reset_index(drop=True)
             emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
@@ -104,6 +104,29 @@ except Exception as e:
         })
     }
     sheets = ["示例"]
+
+# -------------------- ✅ 新增月份/季度 --------------------
+new_sheet_name = st.sidebar.text_input("➕ 新增时间点（月或季）")
+
+if st.sidebar.button("创建新的时间点"):
+    if new_sheet_name:
+        try:
+            if os.path.exists(SAVE_FILE):
+                with pd.ExcelWriter(SAVE_FILE, mode="a", engine="openpyxl") as writer:
+                    pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
+                        writer, sheet_name=new_sheet_name, index=False
+                    )
+            else:
+                with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+                    pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
+                        writer, sheet_name=new_sheet_name, index=False
+                    )
+            st.cache_data.clear()  # 清缓存
+            st.sidebar.success(f"✅ 已在 {SAVE_FILE} 创建新时间点: {new_sheet_name}")
+        except Exception as e:
+            st.sidebar.error(f"创建失败：{e}")
+    else:
+        st.sidebar.warning("请输入时间点名称后再点击创建")
 
 # -------------------- 时间和分组选择 --------------------
 time_choice = st.sidebar.multiselect("选择时间点（月或季）", sheets, default=sheets[:1])
@@ -222,6 +245,7 @@ def show_cards(df0):
     c4.markdown(f"<div class='metric-card'><div class='metric-value'>{avg_score}</div><div class='metric-label'>平均数</div></div>", unsafe_allow_html=True)
     st.markdown("<hr/>", unsafe_allow_html=True)
 
+
 # -------------------- 主页面 --------------------
 st.title("📊 技能覆盖分析大屏")
 
@@ -229,6 +253,7 @@ if view == "编辑数据":
     if not time_choice:
         st.warning("⚠️ 请在左侧选择时间点（月或季）后再编辑数据")
     else:
+        # 卡片
         show_cards(df)
         st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
@@ -243,10 +268,14 @@ if view == "编辑数据":
                 else:
                     with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
                         edited_df.to_excel(writer, sheet_name=sheet_name, index=False)
+                st.cache_data.clear()   # ✅ 保存后清缓存
                 st.success(f"✅ 修改已保存到 {SAVE_FILE} ({sheet_name})")
             except Exception as e:
                 st.error(f"保存失败：{e}")
         st.dataframe(edited_df)
+
+# 其他 view ("大屏轮播", "单页模式", "显示所有视图", "能力分析") 部分保持不变
+
 
 elif view == "大屏轮播":
     if not time_choice:
