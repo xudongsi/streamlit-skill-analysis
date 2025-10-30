@@ -65,46 +65,37 @@ SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
-def load_sheets(xpd):
-    """从 Excel 文件中加载所有工作表并标准化为统一格式"""
+def load_sheets(file, ts=None) -> Tuple[List[str], dict]:
+    xpd = pd.ExcelFile(file)
     frames = {}
-
     for s in xpd.sheet_names:
-        df0 = pd.read_excel(xpd, sheet_name=s)
-        if df0.empty:
-            continue
+        try:
+            df0 = pd.read_excel(xpd, sheet_name=s)
+            if df0.empty:
+                continue
+            if not {"明细", "员工", "值"}.issubset(df0.columns):
+                st.sidebar.warning(f"⚠️ 表 {s} 缺少必要列，已跳过。")
+                continue
 
-        # -------- 检测“分组行”结构（即第一行是 '分组'）---------
-        if isinstance(df0.iloc[0, 0], str) and "分组" in df0.iloc[0, 0]:
-            groups = df0.iloc[0, 1:].tolist()  # 第一行各列对应的分组名
-            df0 = df0.drop(0).reset_index(drop=True)
-
-            # 识别员工列
-            emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
-
-            # 建立员工→分组映射表
-            group_map = {emp: groups[i] if i < len(groups) else None for i, emp in enumerate(emp_cols)}
-
-            # 将宽表转成长表
-            df_long = df0.melt(
-                id_vars=[col for col in ["明细", "数量总和", "编号"] if col in df0.columns],
-                value_vars=emp_cols,
-                var_name="员工",
-                value_name="值"
-            )
-            df_long["分组"] = df_long["员工"].map(group_map)
-            frames[s] = df_long
-
-        # -------- 若已经是标准长表结构 ----------
-        elif {"明细", "员工", "值"}.issubset(df0.columns):
-            frames[s] = df0.copy()
-
-        else:
-            # 不符合格式的表跳过
-            print(f"⚠️ 跳过表 {s}：未检测到必要列或分组行结构。")
-            continue
-
-    return frames
+            # 解析分组行
+            if df0.iloc[0, 0] == "分组":
+                groups = df0.iloc[0, 1:].tolist()
+                df0 = df0.drop(0).reset_index(drop=True)
+                emp_cols = [c for c in df0.columns if c not in ["明细", "数量总和", "编号"]]
+                group_map = {emp: groups[i] if i < len(groups) else None for i, emp in enumerate(emp_cols)}
+                df_long = df0.melt(
+                    id_vars=["明细", "数量总和"] if "数量总和" in df0.columns else ["明细"],
+                    value_vars=emp_cols,
+                    var_name="员工",
+                    value_name="值"
+                )
+                df_long["分组"] = df_long["员工"].map(group_map)
+                frames[s] = df_long
+            else:
+                frames[s] = df0
+        except Exception as e:
+            st.sidebar.error(f"❌ 读取 {s} 时出错: {e}")
+    return xpd.sheet_names, frames
 
 
 # -------------------- 文件读取 --------------------
