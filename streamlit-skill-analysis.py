@@ -61,7 +61,7 @@ hr{
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
-SAVE_FILE = "data.xlsx"   # 固定保存的文件
+SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
@@ -214,7 +214,7 @@ st.sidebar.markdown("### ⚙️ 数据修复工具")
 if st.sidebar.button("🧮 一键更新所有数量总和"):
     try:
         if not os.path.exists(SAVE_FILE):
-            st.sidebar.warning("未找到文件 data.xlsx")
+            st.sidebar.warning("未找到文件 jixiao.xlsx")
         else:
             xls = pd.ExcelFile(SAVE_FILE)
             updated_frames = {}
