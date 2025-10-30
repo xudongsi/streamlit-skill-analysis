@@ -287,7 +287,12 @@ def get_merged_df(keys: List[str], groups: List[str]) -> pd.DataFrame:
 df = get_merged_df(time_choice, selected_groups)
  #-------------------- 图表函数 --------------------
 def chart_total(df0):
-    df0 = df0[df0["明细"] != "分数总和"]
+    # --- 修复: 防止 KeyError: '明细' ---
+    if df0 is None or df0.empty:
+        return go.Figure()
+    if "明细" in df0.columns:
+        df0 = df0[df0["明细"] != "分数总和"]
+    # ------------------------------------------------
     emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
     fig = go.Figure(go.Bar(
         x=emp_stats["员工"],
@@ -300,7 +305,12 @@ def chart_total(df0):
     return fig
 
 def chart_stack(df0):
-    df0 = df0[df0["明细"] != "分数总和"]
+    # --- 修复: 防止 KeyError: '明细' ---
+    if df0 is None or df0.empty:
+        return go.Figure()
+    if "明细" in df0.columns:
+        df0 = df0[df0["明细"] != "分数总和"]
+    # ------------------------------------------------
     df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
     fig = go.Figure()
     for emp in df_pivot.columns:
@@ -310,7 +320,18 @@ def chart_stack(df0):
 
 
 def chart_hot(df0):
-    ts = df0[df0["明细"] != "分数总和"].groupby("明细")["员工"].nunique()
+    # --- 修复: 防止 KeyError: '明细' ---
+    if df0 is None or df0.empty:
+        return {
+            "backgroundColor":"transparent",
+            "yAxis":{"type":"category","data":[],"axisLabel":{"color":"#fff"}},
+            "xAxis":{"type":"value","axisLabel":{"color":"#fff"}},
+            "series":[{"data":[],"type":"bar","itemStyle":{"color":"#ffb703"}}]
+        }
+    if "明细" in df0.columns:
+        df0 = df0[df0["明细"] != "分数总和"]
+    # ------------------------------------------------
+    ts = df0.groupby("明细")["员工"].nunique()
     return {
         "backgroundColor":"transparent",
         "yAxis":{"type":"category","data":ts.index.tolist(),"axisLabel":{"color":"#fff"}},
@@ -319,7 +340,19 @@ def chart_hot(df0):
     }
 
 def chart_heat(df0):
-    df0 = df0[df0["明细"] != "分数总和"]
+    # --- 修复: 防止 KeyError: '明细' ---
+    if df0 is None or df0.empty:
+        return {
+            "backgroundColor":"transparent",
+            "tooltip":{"position":"top"},
+            "xAxis":{"type":"category","data":[],"axisLabel":{"color":"#fff"}},
+            "yAxis":{"type":"category","data":[],"axisLabel":{"color":"#fff"}},
+            "visualMap":{"min":0,"max":1,"show":False,"inRange":{"color":["#ff4d4d","#4caf50"]}},
+            "series":[{"type":"heatmap","data":[]}]
+        }
+    if "明细" in df0.columns:
+        df0 = df0[df0["明细"] != "分数总和"]
+    # ------------------------------------------------
     tasks = df0["明细"].unique().tolist()
     emps = df0["员工"].unique().tolist()
     data=[]
@@ -338,7 +371,13 @@ def chart_heat(df0):
 
 # -------------------- 卡片显示 --------------------
 def show_cards(df0):
-    df0 = df0[df0["明细"] != "分数总和"]
+    # --- 修复: 防止 KeyError: '明细' ---
+    if df0 is None or df0.empty:
+        st.info("暂无有效数据可展示")
+        return
+    if "明细" in df0.columns:
+        df0 = df0[df0["明细"] != "分数总和"]
+    # ------------------------------------------------
     total_tasks = df0["明细"].nunique()
     total_people = df0["员工"].nunique()
     ps = df0.groupby("员工")["值"].sum()
@@ -458,7 +497,12 @@ elif view == "能力分析":
         fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
         for sheet in time_choice:
             df_sheet = get_merged_df([sheet], selected_groups)
-            df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+            # --- 修复: 防止 KeyError: '明细' ---
+            if df_sheet is None or df_sheet.empty:
+                continue
+            if "明细" in df_sheet.columns:
+                df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+            # ------------------------------------------------
             df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
             for emp in selected_emps:
