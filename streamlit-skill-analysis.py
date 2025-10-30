@@ -65,19 +65,32 @@ SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 # -------------------- 数据导入 --------------------
 @st.cache_data
+@st.cache_data
 def load_sheets(file, ts=None) -> Tuple[List[str], dict]:
     xpd = pd.ExcelFile(file)
     frames = {}
     for s in xpd.sheet_names:
         try:
-            df0 = pd.read_excel(xpd, sheet_name=s)
+            # ✅ 关键修复：不设 header，让我们手动检测“分组”行
+            df0 = pd.read_excel(xpd, sheet_name=s, header=None)
             if df0.empty:
                 continue
-            if not {"明细", "员工", "值"}.issubset(df0.columns):
-                st.sidebar.warning(f"⚠️ 表 {s} 缺少必要列，已跳过。")
+
+            # ✅ 判断是否是标准模板（第二行是分组）
+            if "明细" in df0.iloc[0].tolist() and df0.shape[0] > 1 and df0.iloc[1, 0] == "分组":
+                df0.columns = df0.iloc[0].tolist()
+                df0 = df0.drop(0).reset_index(drop=True)
+            elif "明细" not in df0.columns and "明细" in df0.iloc[0].tolist():
+                # 兼容无“分组”行但首行为表头的表
+                df0.columns = df0.iloc[0].tolist()
+                df0 = df0.drop(0).reset_index(drop=True)
+
+            # ✅ 确保列名标准
+            if not {"明细"}.issubset(df0.columns):
+                st.sidebar.warning(f"⚠️ 表 {s} 缺少 '明细' 列，已跳过。")
                 continue
 
-            # 解析分组行
+            # ✅ 检测“分组”行逻辑保持原样
             if df0.iloc[0, 0] == "分组":
                 groups = df0.iloc[0, 1:].tolist()
                 df0 = df0.drop(0).reset_index(drop=True)
