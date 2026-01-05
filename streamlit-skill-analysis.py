@@ -102,19 +102,6 @@ st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
 SAVE_FILE = "jixiao.xlsx"  # 固定保存的文件
 
-# -------------------- 定义鲜艳的颜色列表（用于能力分析） --------------------
-BRIGHT_COLORS = [
-    "#FF0000",  # 红色
-    "#00FF00",  # 绿色
-    "#0000FF",  # 蓝色
-    "#FFA500",  # 橙色
-    "#800080",  # 紫色
-    "#00FFFF",  # 青色
-    "#FFC0CB",  # 粉色
-    "#FFFF00",  # 黄色
-    "#008080",  # 蓝绿色
-    "#FF00FF"  # 洋红
-]
 
 # -------------------- 数据导入 --------------------
 @st.cache_data  # 修复：删除重复装饰器
@@ -800,98 +787,318 @@ elif view == "能力分析":
         st.subheader("📈 能力分析")
         
         if not df.empty:
+            # ✅ 显示选择的时间点
+            if len(time_choice) > 1:
+                st.info(f"📊 当前分析 {len(time_choice)} 个时间点: {', '.join(time_choice)}")
+
             employees = df["员工"].unique().tolist()
-            selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
+            selected_emps = st.sidebar.multiselect(
+                "选择员工（图1显示）", 
+                employees, 
+                default=employees[:min(5, len(employees))],  # 默认最多5个
+                key="emp_select"
+            )
+            
+            # 检查是否选择了员工
+            if not selected_emps:
+                st.warning("⚠️ 请至少选择一名员工进行分析")
+                st.stop()
+            
             tasks = df["明细"].unique().tolist()
+            
+            # ✅ 限制员工数量，避免图表过于拥挤
+            if len(selected_emps) > 10:
+                st.warning(f"⚠️ 选择了 {len(selected_emps)} 名员工，图表可能过于拥挤，建议最多选择10名员工")
+                selected_emps = selected_emps[:10]  # 自动截断到10个
 
             fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
 
-            # 核心优化：为每个时间点分配固定颜色，确保fig2和fig3颜色一致
-            sheet_color_map = {}
-            for idx, sheet in enumerate(time_choice):
-                sheet_color_map[sheet] = BRIGHT_COLORS[idx % len(BRIGHT_COLORS)]
+            # ========== 图1：员工任务完成情况（修复版）==========
+            # 为每个员工分配固定颜色
+            employee_colors = {}
+            color_palette = [
+                '#FF6B6B', '#4ECDC4', '#FFD166', '#06D6A0', '#118AB2',  # 鲜艳颜色
+                '#EF476F', '#7209B7', '#3A86FF', '#FB5607', '#8338EC',
+                '#FF006E', '#FFBE0B', '#3A86FF', '#FB5607', '#8338EC'
+            ]
+            
+            for idx, emp in enumerate(selected_emps):
+                employee_colors[emp] = color_palette[idx % len(color_palette)]
+            
+            # 为每个时间点创建线型区分
+            line_styles = ['solid', 'dash', 'dot', 'dashdot']
+            marker_symbols = ['circle', 'square', 'diamond', 'triangle-up', 'triangle-down']
+            
+            for time_idx, sheet in enumerate(time_choice):
+                df_sheet = get_merged_df([sheet], selected_groups)
+                if df_sheet is None or df_sheet.empty:
+                    continue
+                    
+                df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+                
+                # 确保有任务数据
+                if df_sheet.empty:
+                    continue
+                    
+                df_pivot = df_sheet.pivot_table(index="明细", columns="员工", values="值", fill_value=0)
+                
+                # 对每个选中的员工添加折线
+                for emp_idx, emp in enumerate(selected_emps):
+                    if emp in df_pivot.columns:
+                        y_values = df_pivot[emp].reindex(tasks, fill_value=0)
+                        
+                        # 创建图例名称（格式：员工-时间点）
+                        legend_name = f"{emp} ({sheet})"
+                        
+                        # 为不同时间点使用不同线型
+                        line_style = line_styles[time_idx % len(line_styles)]
+                        
+                        # 为不同员工使用不同标记
+                        marker_sym = marker_symbols[emp_idx % len(marker_symbols)]
+                        
+                        fig1.add_trace(go.Scatter(
+                            x=tasks,
+                            y=y_values,
+                            mode="lines+markers",
+                            name=legend_name,
+                            line=dict(
+                                color=employee_colors[emp],
+                                width=3 if time_idx == 0 else 2,  # 第一个时间点加粗
+                                dash=line_style
+                            ),
+                            marker=dict(
+                                size=10 if time_idx == 0 else 8,
+                                symbol=marker_sym,
+                                line=dict(width=1, color='white')
+                            ),
+                            hovertemplate=f"<b>{emp}</b> ({sheet})<br>任务: %{{x}}<br>完成值: %{{y}}<extra></extra>",
+                            showlegend=True
+                        ))
 
-            # 遍历每个时间点处理数据
-            emp_color_idx = 0
+            # 优化图1布局
+            fig1.update_layout(
+                title={
+                    'text': f"员工任务完成情况 ({len(time_choice)}个时间点对比)",
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'font': {'size': 20}
+                },
+                template="plotly_dark",
+                xaxis_title="任务",
+                yaxis_title="完成值",
+                showlegend=True,
+                legend=dict(
+                    title="员工 (时间点)",
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.4,  # 更低的图例位置
+                    xanchor="center",
+                    x=0.5,
+                    font=dict(size=10),
+                    bgcolor='rgba(30, 41, 59, 0.8)',
+                    bordercolor='rgba(255, 255, 255, 0.2)',
+                    borderwidth=1
+                ),
+                height=600,
+                hovermode='closest',
+                margin=dict(b=150)  # 底部留更多空间给图例
+            )
+            
+            # 如果任务太多，旋转X轴标签
+            if len(tasks) > 15:
+                fig1.update_xaxes(tickangle=45)
+            
+            # ========== 图2：任务整体完成度趋势 ==========
+            # 为每个时间点分配颜色
+            time_colors = {}
+            for idx, sheet in enumerate(time_choice):
+                time_colors[sheet] = color_palette[idx % len(color_palette)]
+
             for sheet in time_choice:
                 df_sheet = get_merged_df([sheet], selected_groups)
                 if df_sheet is None or df_sheet.empty:
                     continue
                     
                 df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-                df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
-
-                # 1. 员工任务完成情况 - 折线图
-                for emp in selected_emps:
-                    if emp in df_pivot.columns:
-                        fig1.add_trace(go.Scatter(
-                            x=tasks,
-                            y=df_pivot[emp].reindex(tasks, fill_value=0),
-                            mode="lines+markers",
-                            name=f"{sheet}-{emp}",
-                            line=dict(color=BRIGHT_COLORS[emp_color_idx % len(BRIGHT_COLORS)], width=3),
-                            marker=dict(size=8)
-                        ))
-                        emp_color_idx += 1
-
-                # 2. 任务整体完成度趋势 - 折线图（固定颜色映射）
+                if df_sheet.empty:
+                    continue
+                    
+                df_pivot = df_sheet.pivot_table(index="明细", columns="员工", values="值", fill_value=0)
+                task_sums = df_pivot.sum(axis=1).reindex(tasks, fill_value=0)
+                
                 fig2.add_trace(go.Scatter(
                     x=tasks,
-                    y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
+                    y=task_sums,
                     mode="lines+markers",
                     name=sheet,
-                    line=dict(color=sheet_color_map[sheet], width=3),
-                    marker=dict(size=8)
+                    line=dict(
+                        color=time_colors[sheet],
+                        width=3
+                    ),
+                    marker=dict(
+                        size=10,
+                        line=dict(width=1, color='white')
+                    ),
+                    hovertemplate=f"<b>时间点: {sheet}</b><br>任务: %{{x}}<br>完成值总和: %{{y}}<extra></extra>"
                 ))
-
-                # 3. 员工整体完成度对比 - 分组柱状图（彻底解决重叠问题）
-                fig3.add_trace(go.Bar(
-                    x=df_pivot.columns,
-                    y=df_pivot.sum(axis=0),
-                    name=sheet,
-                    marker=dict(color=sheet_color_map[sheet]),
-                    width=0.3,  # 极致缩小宽度，避免重叠
-                ))
-
-            # 优化图表样式 - 重点修复柱状图布局
-            fig1.update_layout(
-                title="员工任务完成情况",
-                template="plotly_dark",
-                font=dict(size=12),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
-                height=500
-            )
 
             fig2.update_layout(
-                title="任务整体完成度趋势",
+                title={
+                    'text': f"任务整体完成度趋势 ({len(time_choice)}个时间点对比)",
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'font': {'size': 20}
+                },
                 template="plotly_dark",
-                font=dict(size=12),
-                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
-                height=500
-            )
-
-            # 柱状图核心优化配置
-            fig3.update_layout(
-                title="员工整体完成度对比",
-                template="plotly_dark",
-                font=dict(size=12),
-                barmode="group",  # 分组模式（核心）
-                bargap=0.25,  # 员工组之间的间距（增大）
-                bargroupgap=0.005,  # 同一员工不同时间点柱子的间距（减小）
-                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
-                height=600,  # 增加图表高度，提升展示效果
-                xaxis=dict(
-                    tickangle=45,  # X轴标签旋转45度，避免拥挤
-                    tickfont=dict(size=10)
+                xaxis_title="任务",
+                yaxis_title="完成值总和",
+                showlegend=True,
+                legend=dict(
+                    title="时间点",
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.3,
+                    xanchor="center",
+                    x=0.5,
+                    font=dict(size=10),
+                    bgcolor='rgba(30, 41, 59, 0.8)',
+                    bordercolor='rgba(255, 255, 255, 0.2)',
+                    borderwidth=1
                 ),
-                yaxis=dict(
-                    tickfont=dict(size=10)
-                )
+                height=500,
+                hovermode='closest',
+                margin=dict(b=120)
             )
+            
+            if len(tasks) > 15:
+                fig2.update_xaxes(tickangle=45)
+            
+            # ========== 图3：员工整体完成度对比 ==========
+            # 准备数据：员工 vs 各时间点的总和
+            all_data = {}
+            for sheet in time_choice:
+                df_sheet = get_merged_df([sheet], selected_groups)
+                if df_sheet is None or df_sheet.empty:
+                    continue
+                    
+                df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+                if df_sheet.empty:
+                    continue
+                    
+                df_pivot = df_sheet.pivot_table(index="明细", columns="员工", values="值", fill_value=0)
+                
+                for emp in selected_emps:
+                    if emp in df_pivot.columns:
+                        if emp not in all_data:
+                            all_data[emp] = {}
+                        all_data[emp][sheet] = df_pivot[emp].sum()
+            
+            # 创建柱状图
+            x_positions = list(range(len(selected_emps)))
+            x_labels = selected_emps
+            
+            for time_idx, sheet in enumerate(time_choice):
+                # 收集该时间点所有员工的完成值
+                y_values = []
+                for emp in selected_emps:
+                    y_values.append(all_data.get(emp, {}).get(sheet, 0))
+                
+                fig3.add_trace(go.Bar(
+                    x=x_labels,  # 使用员工名作为X轴标签
+                    y=y_values,
+                    name=sheet,
+                    marker_color=time_colors[sheet],
+                    opacity=0.8,
+                    hovertemplate=f"<b>时间点: {sheet}</b><br>员工: %{{x}}<br>完成值总和: %{{y}}<extra></extra>",
+                    text=y_values,
+                    textposition='auto',
+                    textfont=dict(color='white')
+                ))
 
+            fig3.update_layout(
+                title={
+                    'text': f"员工整体完成度对比 ({len(time_choice)}个时间点)",
+                    'x': 0.5,
+                    'xanchor': 'center',
+                    'font': {'size': 20}
+                },
+                template="plotly_dark",
+                xaxis_title="员工",
+                yaxis_title="完成值总和",
+                barmode='group',
+                showlegend=True,
+                legend=dict(
+                    title="时间点",
+                    orientation="h",
+                    yanchor="bottom",
+                    y=-0.3,
+                    xanchor="center",
+                    x=0.5,
+                    font=dict(size=10),
+                    bgcolor='rgba(30, 41, 59, 0.8)',
+                    bordercolor='rgba(255, 255, 255, 0.2)',
+                    borderwidth=1
+                ),
+                height=600,
+                hovermode='x unified',
+                margin=dict(b=120)
+            )
+            
+            # 如果员工太多，旋转X轴标签
+            if len(selected_emps) > 8:
+                fig3.update_xaxes(tickangle=45)
+            
+            # ========== 显示图表 ==========
+            # 添加说明
+            with st.expander("📋 图表说明", expanded=False):
+                st.markdown("""
+                **图1 - 员工任务完成情况**:
+                - 每条折线代表一个员工在一个时间点的完成情况
+                - **颜色区分员工**，线型/标记区分时间点
+                - 悬停查看详细数据：员工名、时间点、任务、完成值
+                
+                **图2 - 任务整体完成度趋势**:
+                - 每条折线代表一个时间点的任务完成总和
+                - 颜色区分不同时间点
+                
+                **图3 - 员工整体完成度对比**:
+                - 分组柱状图，每组代表一个员工
+                - 每个柱子的颜色代表不同时间点
+                """)
+            
+            # 显示图表
             st.plotly_chart(fig1, use_container_width=True, theme="streamlit")
             st.plotly_chart(fig2, use_container_width=True, theme="streamlit")
             st.plotly_chart(fig3, use_container_width=True, theme="streamlit")
+            
+            # 添加数据汇总表格
+            with st.expander("📊 数据汇总", expanded=False):
+                # 创建汇总数据
+                summary_data = []
+                for sheet in time_choice:
+                    df_sheet = get_merged_df([sheet], selected_groups)
+                    if df_sheet is not None and not df_sheet.empty:
+                        df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+                        if not df_sheet.empty:
+                            for emp in selected_emps:
+                                emp_data = df_sheet[df_sheet["员工"] == emp]
+                                if not emp_data.empty:
+                                    total_value = emp_data["值"].sum()
+                                    task_count = emp_data["明细"].nunique()
+                                    summary_data.append({
+                                        "时间点": sheet,
+                                        "员工": emp,
+                                        "任务数": task_count,
+                                        "完成值总和": total_value,
+                                        "平均完成值": round(total_value / max(task_count, 1), 2)
+                                    })
+                
+                if summary_data:
+                    summary_df = pd.DataFrame(summary_data)
+                    st.dataframe(summary_df, use_container_width=True)
+                else:
+                    st.info("暂无汇总数据")
+                    
         else:
             st.info("📭 当前选择没有数据，无法进行分析")
 
