@@ -69,12 +69,52 @@ hr{
 .danger-button div.stButton>button:hover{
     background-color:#ff3333 !important;
 }
+/* 热力图滚动容器样式 */
+.heatmap-container {
+    max-height: 700px;
+    overflow-y: auto;
+    overflow-x: auto;
+    border-radius: 8px;
+}
+/* 滚动条美化 */
+.heatmap-container::-webkit-scrollbar {
+    width: 8px;
+    height: 8px;
+}
+.heatmap-container::-webkit-scrollbar-thumb {
+    background-color: #4cc9f0;
+    border-radius: 4px;
+}
+.heatmap-container::-webkit-scrollbar-track {
+    background-color: #1b263b;
+}
+/* 删除按钮样式 */
+.delete-btn {
+    background-color: #ff4d4d !important;
+    color: white !important;
+}
+.delete-btn:hover {
+    background-color: #ff1a1a !important;
+}
 </style>
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
 SAVE_FILE = "jixiao.xlsx"  # 固定保存的文件
 
+# -------------------- 定义鲜艳的颜色列表（用于能力分析） --------------------
+BRIGHT_COLORS = [
+    "#FF0000",  # 红色
+    "#00FF00",  # 绿色
+    "#0000FF",  # 蓝色
+    "#FFA500",  # 橙色
+    "#800080",  # 紫色
+    "#00FFFF",  # 青色
+    "#FFC0CB",  # 粉色
+    "#FFFF00",  # 黄色
+    "#008080",  # 蓝绿色
+    "#FF00FF"  # 洋红
+]
 
 # -------------------- 数据导入 --------------------
 @st.cache_data  # 修复：删除重复装饰器
@@ -427,7 +467,6 @@ else:
 sections_names = [
     "人员完成任务数量排名",
     "任务对比（堆叠柱状图）",
-    "任务掌握情况（热门任务）",
     "任务-人员热力图"
 ]
 view = st.sidebar.radio("切换视图", ["编辑数据", "大屏轮播", "单页模式", "显示所有视图", "能力分析"], key="view_select")
@@ -461,68 +500,22 @@ def get_merged_df(keys: List[str], groups: List[str]) -> pd.DataFrame:
 df = get_merged_df(time_choice, selected_groups)
 
 
-# -------------------- 图表函数（修复后） --------------------
+# -------------------- 图表函数（使用第一个代码的简化版本） --------------------
 def chart_total(df0):
     if df0 is None or df0.empty:
         return go.Figure()
 
-    # 过滤分数总和
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
-    # ✅ 修复：按员工和时间点分组，区分不同时间点
-    if len(time_choice) > 1 and "时间点" in df0.columns:
-        emp_time_stats = df0.groupby(["员工", "时间点"])["值"].sum().reset_index()
-
-        # 创建分组柱状图
-        fig = go.Figure()
-
-        # 为每个时间点添加一个柱状图系列
-        time_points = sorted(emp_time_stats["时间点"].unique())
-        colors = ['#4cc9f0', '#4895ef', '#4361ee', '#3f37c9', '#3a0ca3']
-
-        for i, time_point in enumerate(time_points):
-            time_data = emp_time_stats[emp_time_stats["时间点"] == time_point]
-            time_data = time_data.sort_values("值", ascending=False)
-
-            fig.add_trace(go.Bar(
-                x=time_data["员工"],
-                y=time_data["值"],
-                name=time_point,
-                marker_color=colors[i % len(colors)],
-                text=time_data["值"],
-                textposition="outside",
-                hovertemplate="员工: %{x}<br>时间点: %{customdata}<br>完成值: %{y}<extra></extra>",
-                customdata=[time_point] * len(time_data)
-            ))
-
-        fig.update_layout(
-            barmode='group',
-            template="plotly_dark",
-            xaxis_title="员工",
-            yaxis_title="完成总值",
-            showlegend=True,
-            legend=dict(
-                orientation="h",
-                yanchor="bottom",
-                y=1.02,
-                xanchor="right",
-                x=1
-            )
-        )
-    else:
-        # 单个时间点的处理
-        emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
-        fig = go.Figure(go.Bar(
-            x=emp_stats["员工"],
-            y=emp_stats["值"],
-            text=emp_stats["值"],
-            textposition="outside",
-            hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>",
-            marker_color='#4cc9f0'
-        ))
-        fig.update_layout(template="plotly_dark", xaxis_title="员工", yaxis_title="完成总值")
-
+    df0 = df0[df0["明细"] != "分数总和"]
+    emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
+    fig = go.Figure(go.Bar(
+        x=emp_stats["员工"],
+        y=emp_stats["值"],
+        text=emp_stats["值"],
+        textposition="outside",
+        hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>",
+        marker_color='#4cc9f0'
+    ))
+    fig.update_layout(template="plotly_dark", xaxis_title="员工", yaxis_title="完成总值")
     return fig
 
 
@@ -530,142 +523,13 @@ def chart_stack(df0):
     if df0 is None or df0.empty:
         return go.Figure()
 
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
-    # ✅ 修复：处理多个时间点的情况
-    if len(time_choice) > 1 and "时间点" in df0.columns:
-        # 使用子图显示不同时间点
-        time_points = sorted(df0["时间点"].unique())
-
-        if len(time_points) == 1:
-            # 单个时间点
-            df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
-            fig = go.Figure()
-            colors = ['#4cc9f0', '#4895ef', '#4361ee', '#3f37c9', '#3a0ca3']
-            for i, emp in enumerate(df_pivot.columns):
-                fig.add_trace(go.Bar(
-                    x=df_pivot.index,
-                    y=df_pivot[emp],
-                    name=emp,
-                    marker_color=colors[i % len(colors)]
-                ))
-            fig.update_layout(
-                barmode="stack",
-                template="plotly_dark",
-                xaxis_title="任务",
-                yaxis_title="完成值",
-                title=f"时间点: {time_points[0]}"
-            )
-        else:
-            # 多个时间点使用子图
-            fig = make_subplots(
-                rows=len(time_points), cols=1,
-                subplot_titles=[f"时间点: {tp}" for tp in time_points],
-                vertical_spacing=0.1
-            )
-
-            colors = ['#4cc9f0', '#4895ef', '#4361ee', '#3f37c9', '#3a0ca3',
-                      '#7209b7', '#560bad', '#480ca8', '#3a0ca3', '#3f37c9']
-
-            for i, tp in enumerate(time_points, 1):
-                df_tp = df0[df0["时间点"] == tp]
-                df_pivot = df_tp.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
-
-                # 获取员工列表，确保颜色一致
-                all_emps = df0["员工"].unique()
-
-                for j, emp in enumerate(df_pivot.columns):
-                    color_idx = list(all_emps).index(emp) % len(colors) if emp in all_emps else j
-                    fig.add_trace(
-                        go.Bar(
-                            x=df_pivot.index,
-                            y=df_pivot[emp],
-                            name=emp,
-                            marker_color=colors[color_idx],
-                            showlegend=(i == 1),
-                            legendgroup=emp
-                        ),
-                        row=i, col=1
-                    )
-
-            fig.update_layout(
-                barmode="stack",
-                template="plotly_dark",
-                height=400 * len(time_points),
-                showlegend=True
-            )
-            fig.update_xaxes(title_text="任务", row=len(time_points), col=1)
-            fig.update_yaxes(title_text="完成值", row=len(time_points) // 2 + 1, col=1)
-    else:
-        # 原始逻辑（单个时间点）
-        df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
-        fig = go.Figure()
-        colors = ['#4cc9f0', '#4895ef', '#4361ee', '#3f37c9', '#3a0ca3']
-        for i, emp in enumerate(df_pivot.columns):
-            fig.add_trace(go.Bar(
-                x=df_pivot.index,
-                y=df_pivot[emp],
-                name=emp,
-                marker_color=colors[i % len(colors)]
-            ))
-        fig.update_layout(barmode="stack", template="plotly_dark", xaxis_title="任务", yaxis_title="完成值")
-
+    df0 = df0[df0["明细"] != "分数总和"]
+    df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
+    fig = go.Figure()
+    for emp in df_pivot.columns:
+        fig.add_trace(go.Bar(x=df_pivot.index, y=df_pivot[emp], name=emp))
+    fig.update_layout(barmode="stack", template="plotly_dark", xaxis_title="任务", yaxis_title="完成值")
     return fig
-
-
-def chart_hot(df0):
-    if df0 is None or df0.empty:
-        return {
-            "backgroundColor": "transparent",
-            "yAxis": {"type": "category", "data": [], "axisLabel": {"color": "#fff"}},
-            "xAxis": {"type": "value", "axisLabel": {"color": "#fff"}},
-            "series": [{"data": [], "type": "bar", "itemStyle": {"color": "#ffb703"}}]
-        }
-
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
-    # ✅ 修复：处理多个时间点的情况
-    if len(time_choice) > 1 and "时间点" in df0.columns:
-        # 按时间点分组显示
-        time_points = sorted(df0["时间点"].unique())
-        tasks = df0["明细"].unique().tolist()[:15]  # 限制显示数量
-
-        option = {
-            "backgroundColor": "transparent",
-            "tooltip": {"trigger": "axis", "axisPointer": {"type": "shadow"}},
-            "legend": {"data": time_points, "textStyle": {"color": "#fff"}},
-            "xAxis": {"type": "value", "axisLabel": {"color": "#fff"}},
-            "yAxis": {"type": "category", "data": tasks, "axisLabel": {"color": "#fff"}},
-            "series": []
-        }
-
-        colors = ['#ffb703', '#fb8500', '#ff006e', '#8338ec', '#3a86ff']
-
-        for i, tp in enumerate(time_points):
-            df_tp = df0[df0["时间点"] == tp]
-            ts = df_tp.groupby("明细")["员工"].nunique()
-            # 确保顺序一致
-            ts_ordered = [ts.get(task, 0) for task in tasks]
-
-            option["series"].append({
-                "name": tp,
-                "type": "bar",
-                "data": ts_ordered,
-                "itemStyle": {"color": colors[i % len(colors)]}
-            })
-    else:
-        # 原始逻辑（单个时间点）
-        ts = df0.groupby("明细")["员工"].nunique().sort_values(ascending=False).head(15)
-        option = {
-            "backgroundColor": "transparent",
-            "yAxis": {"type": "category", "data": ts.index.tolist(), "axisLabel": {"color": "#fff"}},
-            "xAxis": {"type": "value", "axisLabel": {"color": "#fff"}},
-            "series": [{"data": ts.tolist(), "type": "bar", "itemStyle": {"color": "#ffb703"}}]
-        }
-
-    return option
 
 
 def chart_heat(df0):
@@ -679,97 +543,27 @@ def chart_heat(df0):
             "series": [{"type": "heatmap", "data": []}]
         }
 
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
-    # ✅ 修复：处理多个时间点的情况
-    if len(time_choice) > 1 and "时间点" in df0.columns:
-        # 使用下拉框选择时间点
-        time_points = sorted(df0["时间点"].unique())
-
-        option = {
-            "backgroundColor": "transparent",
-            "tooltip": {"position": "top"},
-            "visualMap": {"min": 0, "max": 1, "show": False, "inRange": {"color": ["#ff4d4d", "#4caf50"]}},
-            "series": [],
-            "timeline": {
-                "axisType": "category",
-                "autoPlay": False,
-                "playInterval": 2000,
-                "data": time_points,
-                "label": {"color": "#fff"},
-                "lineStyle": {"color": "#4cc9f0"}
-            },
-            "options": []
-        }
-
-        for tp in time_points:
-            df_tp = df0[df0["时间点"] == tp]
-            tasks = df_tp["明细"].unique().tolist()[:20]  # 限制数量
-            emps = df_tp["员工"].unique().tolist()[:20]  # 限制数量
-            data = []
-
-            max_val = 0
-            for i, t in enumerate(tasks):
-                for j, e in enumerate(emps):
-                    v = int(df_tp[(df_tp["明细"] == t) & (df_tp["员工"] == e)]["值"].sum())
-                    data.append([j, i, v])
-                    max_val = max(max_val, v)
-
-            option["options"].append({
-                "title": {"text": f"时间点: {tp}", "textStyle": {"color": "#fff"}},
-                "xAxis": {
-                    "type": "category",
-                    "data": emps,
-                    "axisLabel": {"color": "#fff", "rotate": 45, "interval": 0}
-                },
-                "yAxis": {
-                    "type": "category",
-                    "data": tasks,
-                    "axisLabel": {"color": "#fff"}
-                },
-                "series": [{"type": "heatmap", "data": data}]
-            })
-
-        # 更新visualMap的最大值
-        if max_val > 0:
-            option["visualMap"]["max"] = max_val
-    else:
-        # 原始逻辑（单个时间点）
-        tasks = df0["明细"].unique().tolist()[:20]  # 限制数量
-        emps = df0["员工"].unique().tolist()[:20]  # 限制数量
-        data = []
-
-        max_val = 0
-        for i, t in enumerate(tasks):
-            for j, e in enumerate(emps):
-                v = int(df0[(df0["明细"] == t) & (df0["员工"] == e)]["值"].sum())
-                data.append([j, i, v])
-                max_val = max(max_val, v)
-
-        option = {
-            "backgroundColor": "transparent",
-            "tooltip": {"position": "top"},
-            "xAxis": {
-                "type": "category",
-                "data": emps,
-                "axisLabel": {"color": "#fff", "rotate": 45, "interval": 0}
-            },
-            "yAxis": {
-                "type": "category",
-                "data": tasks,
-                "axisLabel": {"color": "#fff"}
-            },
-            "visualMap": {
-                "min": 0,
-                "max": max_val if max_val > 0 else 1,
-                "show": True,
-                "inRange": {"color": ["#ff4d4d", "#4caf50"]}
-            },
-            "series": [{"type": "heatmap", "data": data}]
-        }
-
-    return option
+    df0 = df0[df0["明细"] != "分数总和"]
+    tasks = df0["明细"].unique().tolist()
+    emps = df0["员工"].unique().tolist()
+    data = []
+    
+    for i, t in enumerate(tasks):
+        for j, e in enumerate(emps):
+            v = int(df0[(df0["明细"] == t) & (df0["员工"] == e)]["值"].sum())
+            data.append([j, i, v])
+    
+    max_val = max([d[2] for d in data]) if data else 1
+    
+    return {
+        "backgroundColor": "transparent",
+        "tooltip": {"position": "top"},
+        "xAxis": {"type": "category", "data": emps, "axisLabel": {"color": "#fff", "rotate": 45}},
+        "yAxis": {"type": "category", "data": tasks, "axisLabel": {"color": "#fff"}},
+        "visualMap": {"min": 0, "max": max_val, "show": True,
+                      "inRange": {"color": ["#ff4d4d", "#4caf50"]}, "textStyle": {"color": "#fff"}},
+        "series": [{"type": "heatmap", "data": data, "emphasis": {"itemStyle": {"shadowBlur": 10}}}]
+    }
 
 
 # -------------------- 卡片显示 --------------------
@@ -928,10 +722,10 @@ elif view == "大屏轮播":
         show_cards(df)
 
         if not df.empty:
+            # 移除热门任务，只保留3个图表轮播
             secs = [
                 ("完成排名", chart_total(df)),
                 ("任务对比", chart_stack(df)),
-                ("热门任务", chart_hot(df)),
                 ("热力图", chart_heat(df))
             ]
             idx = int(time.time() / 10) % len(secs)
@@ -941,7 +735,10 @@ elif view == "大屏轮播":
             if isinstance(op, go.Figure):
                 st.plotly_chart(op, use_container_width=True, theme="streamlit")
             else:
-                st_echarts(op, height="600px", theme="dark")
+                # 热力图添加滚动容器
+                st.markdown('<div class="heatmap-container">', unsafe_allow_html=True)
+                st_echarts(op, height=f"{max(600, len(df['明细'].unique()) * 25)}px", theme="dark")
+                st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("📭 当前选择没有数据，无法显示图表")
 
@@ -956,7 +753,6 @@ elif view == "单页模式":
             mapping = {
                 "人员完成任务数量排名": chart_total(df),
                 "任务对比（堆叠柱状图）": chart_stack(df),
-                "任务掌握情况（热门任务）": chart_hot(df),
                 "任务-人员热力图": chart_heat(df)
             }
             chart_func = mapping.get(choice, chart_total(df))
@@ -965,7 +761,10 @@ elif view == "单页模式":
             if isinstance(chart_func, go.Figure):
                 st.plotly_chart(chart_func, use_container_width=True, theme="streamlit")
             else:
-                st_echarts(chart_func, height="600px", theme="dark")
+                # 热力图添加滚动容器
+                st.markdown('<div class="heatmap-container">', unsafe_allow_html=True)
+                st_echarts(chart_func, height=f"{max(600, len(df['明细'].unique()) * 25)}px", theme="dark")
+                st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("📭 当前选择没有数据，无法显示图表")
 
@@ -976,10 +775,10 @@ elif view == "显示所有视图":
         show_cards(df)
 
         if not df.empty:
+            # 移除热门任务，只保留3个图表
             charts = [
                 ("完成排名", chart_total(df)),
                 ("任务对比（堆叠柱状图）", chart_stack(df)),
-                ("热门任务", chart_hot(df)),
                 ("热图", chart_heat(df))
             ]
             for label, f in charts:
@@ -987,7 +786,10 @@ elif view == "显示所有视图":
                 if isinstance(f, go.Figure):
                     st.plotly_chart(f, use_container_width=True, theme="streamlit")
                 else:
-                    st_echarts(f, height="520px", theme="dark")
+                    # 热力图添加滚动容器
+                    st.markdown('<div class="heatmap-container">', unsafe_allow_html=True)
+                    st_echarts(f, height=f"{max(600, len(df['明细'].unique()) * 25)}px", theme="dark")
+                    st.markdown('</div>', unsafe_allow_html=True)
         else:
             st.info("📭 当前选择没有数据，无法显示图表")
 
@@ -995,41 +797,31 @@ elif view == "能力分析":
     if not time_choice:
         st.warning("⚠️ 请在左侧选择时间点（月或季）后查看能力分析")
     else:
-        st.subheader("📊 能力分析")
-
+        st.subheader("📈 能力分析")
+        
         if not df.empty:
-            # ✅ 显示选择的时间点
-            if len(time_choice) > 1:
-                st.info(f"📊 当前分析 {len(time_choice)} 个时间点: {', '.join(time_choice)}")
-
             employees = df["员工"].unique().tolist()
-            selected_emps = st.sidebar.multiselect(
-                "选择员工（图1显示）",
-                employees,
-                default=employees[:3] if employees else [],
-                key="emp_select"
-            )
+            selected_emps = st.sidebar.multiselect("选择员工（图1显示）", employees, default=employees)
             tasks = df["明细"].unique().tolist()
 
             fig1, fig2, fig3 = go.Figure(), go.Figure(), go.Figure()
 
-            # ✅ 使用颜色区分不同时间点
-            colors = ['#4cc9f0', '#4895ef', '#4361ee', '#3f37c9', '#3a0ca3',
-                      '#7209b7', '#560bad', '#480ca8', '#3a0ca3', '#3f37c9']
-
+            # 核心优化：为每个时间点分配固定颜色，确保fig2和fig3颜色一致
+            sheet_color_map = {}
             for idx, sheet in enumerate(time_choice):
+                sheet_color_map[sheet] = BRIGHT_COLORS[idx % len(BRIGHT_COLORS)]
+
+            # 遍历每个时间点处理数据
+            emp_color_idx = 0
+            for sheet in time_choice:
                 df_sheet = get_merged_df([sheet], selected_groups)
                 if df_sheet is None or df_sheet.empty:
                     continue
+                    
+                df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
+                df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
-                if "明细" in df_sheet.columns:
-                    df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-
-                df_pivot = df_sheet.pivot_table(index="明细", columns="员工", values="值", fill_value=0)
-
-                color = colors[idx % len(colors)]
-
-                # 图1: 员工任务完成情况（多条线）
+                # 1. 员工任务完成情况 - 折线图
                 for emp in selected_emps:
                     if emp in df_pivot.columns:
                         fig1.add_trace(go.Scatter(
@@ -1037,65 +829,64 @@ elif view == "能力分析":
                             y=df_pivot[emp].reindex(tasks, fill_value=0),
                             mode="lines+markers",
                             name=f"{sheet}-{emp}",
-                            line=dict(color=color, width=2 if sheet == time_choice[-1] else 1),
-                            opacity=0.7 if sheet != time_choice[-1] else 1,
-                            showlegend=True if emp == selected_emps[0] else False,
-                            legendgroup=sheet
+                            line=dict(color=BRIGHT_COLORS[emp_color_idx % len(BRIGHT_COLORS)], width=3),
+                            marker=dict(size=8)
                         ))
+                        emp_color_idx += 1
 
-                # 图2: 任务整体完成度趋势
-                task_sums = df_pivot.sum(axis=1).reindex(tasks, fill_value=0)
+                # 2. 任务整体完成度趋势 - 折线图（固定颜色映射）
                 fig2.add_trace(go.Scatter(
                     x=tasks,
-                    y=task_sums,
+                    y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
                     mode="lines+markers",
                     name=sheet,
-                    line=dict(color=color, width=3 if sheet == time_choice[-1] else 2),
-                    marker=dict(size=8 if sheet == time_choice[-1] else 6)
+                    line=dict(color=sheet_color_map[sheet], width=3),
+                    marker=dict(size=8)
                 ))
 
-                # 图3: 员工整体完成度对比
-                emp_sums = df_pivot.sum(axis=0)
-                if not emp_sums.empty:
-                    fig3.add_trace(go.Bar(
-                        x=emp_sums.index,
-                        y=emp_sums.values,
-                        name=sheet,
-                        marker_color=color,
-                        opacity=0.7
-                    ))
+                # 3. 员工整体完成度对比 - 分组柱状图（彻底解决重叠问题）
+                fig3.add_trace(go.Bar(
+                    x=df_pivot.columns,
+                    y=df_pivot.sum(axis=0),
+                    name=sheet,
+                    marker=dict(color=sheet_color_map[sheet]),
+                    width=0.3,  # 极致缩小宽度，避免重叠
+                ))
 
-            # 更新图表布局
+            # 优化图表样式 - 重点修复柱状图布局
             fig1.update_layout(
-                title="员工任务完成情况（多时间点对比）",
+                title="员工任务完成情况",
                 template="plotly_dark",
-                xaxis_title="任务",
-                yaxis_title="完成值",
-                showlegend=True,
-                legend=dict(
-                    orientation="h",
-                    yanchor="bottom",
-                    y=1.02,
-                    xanchor="right",
-                    x=1
-                )
+                font=dict(size=12),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                height=500
             )
 
             fig2.update_layout(
-                title="任务整体完成度趋势（多时间点对比）",
+                title="任务整体完成度趋势",
                 template="plotly_dark",
-                xaxis_title="任务",
-                yaxis_title="完成值总和",
-                showlegend=True
+                font=dict(size=12),
+                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                height=500
             )
 
+            # 柱状图核心优化配置
             fig3.update_layout(
-                title="员工整体完成度对比（多时间点堆叠）",
+                title="员工整体完成度对比",
                 template="plotly_dark",
-                xaxis_title="员工",
-                yaxis_title="完成值总和",
-                barmode='group' if len(time_choice) > 1 else 'stack',
-                showlegend=True if len(time_choice) > 1 else False
+                font=dict(size=12),
+                barmode="group",  # 分组模式（核心）
+                bargap=0.25,  # 员工组之间的间距（增大）
+                bargroupgap=0.005,  # 同一员工不同时间点柱子的间距（减小）
+                legend=dict(orientation="h", yanchor="bottom", y=-0.3, xanchor="center", x=0.5),
+                height=600,  # 增加图表高度，提升展示效果
+                xaxis=dict(
+                    tickangle=45,  # X轴标签旋转45度，避免拥挤
+                    tickfont=dict(size=10)
+                ),
+                yaxis=dict(
+                    tickfont=dict(size=10)
+                )
             )
 
             st.plotly_chart(fig1, use_container_width=True, theme="streamlit")
