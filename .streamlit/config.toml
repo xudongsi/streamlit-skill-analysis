@@ -5,16 +5,3 @@ secondaryBackgroundColor = "#1b263b"
 textColor = "#ffffff"
 font = "sans-serif"
 base = "dark"
-
-[server]
-port = 8501
-address = "0.0.0.0"
-enableCORS = false
-enableXsrfProtection = false
-
-[browser]
-serverAddress = "localhost"
-serverPort = 8501
-
-[client]
-showErrorDetails = true
