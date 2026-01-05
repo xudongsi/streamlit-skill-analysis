@@ -88,7 +88,7 @@ hr{
 """
 st.markdown(PAGE_CSS, unsafe_allow_html=True)
 
-SAVE_FILE = r"C:\Users\12935332\Desktop\jixiao.xlsx"  # 固定保存的文件
+SAVE_FILE = "jixiao.xlsx"   # 固定保存的文件
 
 
 # -------------------- 数据导入 --------------------
@@ -102,26 +102,14 @@ def load_sheets(file) -> Tuple[List[str], dict]:
     frames = {}
     for s in xpd.sheet_names:
         try:
-            # 读取Excel时不设置header，以便手动检测"分组"行
-            df0 = pd.read_excel(xpd, sheet_name=s, header=None)
+            df0 = pd.read_excel(xpd, sheet_name=s)
             if df0.empty:
                 continue
-
-            # 判断是否是标准模板（第二行是分组）
-            if "明细" in df0.iloc[0].tolist() and df0.shape[0] > 1 and df0.iloc[1, 0] == "分组":
-                df0.columns = df0.iloc[0].tolist()
-                df0 = df0.drop(0).reset_index(drop=True)
-            elif "明细" not in df0.columns and "明细" in df0.iloc[0].tolist():
-                # 兼容无"分组"行但首行为表头的表
-                df0.columns = df0.iloc[0].tolist()
-                df0 = df0.drop(0).reset_index(drop=True)
-
-            # 确保列名标准
-            if not {"明细"}.issubset(df0.columns):
-                st.sidebar.warning(f"⚠️ 表 {s} 缺少 '明细' 列，已跳过。")
+            if not {"明细", "员工", "值"}.issubset(df0.columns):
+                st.sidebar.warning(f"⚠️ 表 {s} 缺少必要列，已跳过。")
                 continue
 
-            # 检测"分组"行逻辑
+            # 解析分组行
             if df0.iloc[0, 0] == "分组":
                 groups = df0.iloc[0, 1:].tolist()
                 df0 = df0.drop(0).reset_index(drop=True)
@@ -133,19 +121,9 @@ def load_sheets(file) -> Tuple[List[str], dict]:
                     var_name="员工",
                     value_name="值"
                 )
-                # 确保值为数值类型
-                df_long["值"] = pd.to_numeric(df_long["值"], errors='coerce').fillna(0)
                 df_long["分组"] = df_long["员工"].map(group_map)
-                # ✅ 新增：添加时间点列
-                df_long["时间点"] = s
                 frames[s] = df_long
             else:
-                # ✅ 新增：对于已有数据的表也添加时间点列
-                if "时间点" not in df0.columns:
-                    df0["时间点"] = s
-                # 确保值为数值类型
-                if "值" in df0.columns:
-                    df0["值"] = pd.to_numeric(df0["值"], errors='coerce').fillna(0)
                 frames[s] = df0
         except Exception as e:
             st.sidebar.error(f"❌ 读取 {s} 时出错: {e}")
@@ -174,82 +152,69 @@ def delete_sheet(file_path, sheet_name):
 
 
 # -------------------- 文件读取 --------------------
-sheets, sheet_frames = [], {}
-try:
-    if os.path.exists(SAVE_FILE):
-        sheets, sheet_frames = load_sheets(SAVE_FILE)
-        st.sidebar.success(f"✅ 已加载库文件 {SAVE_FILE}")
-    else:
-        # 创建示例数据
-        sheet_frames = {
-            "示例_2025_01": pd.DataFrame({
-                "明细": ["任务A", "任务B", "任务C"],
-                "数量总和": [3, 2, 5],
-                "员工": ["张三", "李四", "王五"],
-                "值": [1, 1, 1],
-                "分组": ["A8", "B7", "VN"],
-                "时间点": "示例_2025_01"
-            })
-        }
-        with pd.ExcelWriter(SAVE_FILE, engine='openpyxl') as writer:
-            for sheet_name, df0 in sheet_frames.items():
-                df0.to_excel(writer, sheet_name=sheet_name, index=False)
+sheets, sheet_frames = load_sheets(SAVE_FILE)
 
-        sheets, sheet_frames = load_sheets(SAVE_FILE)
-        st.sidebar.info("📁 创建了示例数据文件")
+# 初始化：文件不存在时创建空文件，不重置已有数据（解决问题1）
+if not os.path.exists(SAVE_FILE):
+    # 创建空Excel文件，避免后续报错
+    with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+        pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"]).to_excel(
+            writer, sheet_name="示例_2025_01", index=False
+        )
+    sheets, sheet_frames = load_sheets(SAVE_FILE)
+    st.sidebar.success(f"✅ 已创建初始文件 {SAVE_FILE}")
+elif not sheets:
+    st.sidebar.warning("⚠️ 文件存在但无有效工作表，已创建示例数据")
+    sheet_frames = {
+        "示例_2025_01": pd.DataFrame({
+            "明细": ["任务A", "任务B", "任务C"],
+            "数量总和": [3, 2, 5],
+            "员工": ["张三", "李四", "王五"],
+            "值": [1, 1, 1],
+            "分组": ["A8", "B7", "VN"]
+        })
+    }
+    sheets = ["示例_2025_01"]
+else:
+    st.sidebar.success(f"✅ 已加载库文件 {SAVE_FILE}（共{len(sheets)}个工作表）")
 
-    # ---------- 🧠 自动检测并修复数量总和 ----------
-    repaired_count = 0
-    repaired_frames = {}
-    for sheet_name, df0 in sheet_frames.items():
-        if df0 is not None and not df0.empty and "明细" in df0.columns and "值" in df0.columns:
-            # 检查数量总和列是否存在或是否为空
-            if "数量总和" not in df0.columns or df0["数量总和"].isnull().any():
-                repaired = True
+# ---------- 🧠 自动检测并修复数量总和 ----------
+repaired_count = 0
+repaired_frames = {}
+for sheet_name, df0 in sheet_frames.items():
+    if "明细" in df0.columns and "值" in df0.columns:
+        # 检查数量总和列是否存在或是否为空
+        if "数量总和" not in df0.columns or df0["数量总和"].isnull().any():
+            repaired = True
+        else:
+            # 判断当前总和是否与真实值匹配
+            true_sum = df0.groupby("明细")["值"].sum().reset_index()
+            merged = df0.merge(true_sum, on="明细", how="left", suffixes=("", "_真实"))
+            repaired = not merged["数量总和"].equals(merged["值_真实"])
+
+        if repaired:
+            repaired_count += 1
+            sum_df = (
+                df0.groupby("明细", as_index=False)["值"].sum()
+                .rename(columns={"值": "数量总和"})
+            )
+            df0 = df0.drop(columns=["数量总和"], errors="ignore")
+            df0 = df0.merge(sum_df, on="明细", how="left")
+            repaired_frames[sheet_name] = df0
+
+if repaired_frames:
+    with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
+        for sn in sheets:
+            if sn in repaired_frames:
+                repaired_df = repaired_frames[sn]
+                repaired_df.to_excel(writer, sheet_name=sn, index=False)
+                sheet_frames[sn] = repaired_df
             else:
-                # 判断当前总和是否与真实值匹配
-                true_sum = df0.groupby("明细")["值"].sum().reset_index()
-                merged = df0.merge(true_sum, on="明细", how="left", suffixes=("", "_真实"))
-                repaired = not merged["数量总和"].equals(merged["值_真实"])
-
-            if repaired:
-                repaired_count += 1
-                sum_df = (
-                    df0.groupby("明细", as_index=False)["值"].sum()
-                    .rename(columns={"值": "数量总和"})
-                )
-                df0 = df0.drop(columns=["数量总和"], errors="ignore")
-                df0 = df0.merge(sum_df, on="明细", how="left")
-                # ✅ 确保时间点列存在
-                if "时间点" not in df0.columns:
-                    df0["时间点"] = sheet_name
-                repaired_frames[sheet_name] = df0
-
-    if repaired_frames:
-        try:
-            with pd.ExcelWriter(SAVE_FILE, engine="openpyxl") as writer:
-                for sn in sheets:
-                    if sn in repaired_frames:
-                        repaired_df = repaired_frames[sn]
-                        repaired_df.to_excel(writer, sheet_name=sn, index=False)
-                        sheet_frames[sn] = repaired_df
-                    elif sn in sheet_frames:
-                        df0 = sheet_frames[sn]
-                        # ✅ 确保时间点列存在
-                        if "时间点" not in df0.columns:
-                            df0["时间点"] = sn
-                        df0.to_excel(writer, sheet_name=sn, index=False)
-            
-            st.cache_data.clear()
-            if repaired_count > 0:
-                st.sidebar.info(f"🔧 已自动修复 {repaired_count} 张表的数量总和列")
-        except Exception as e:
-            st.sidebar.error(f"❌ 修复数据时出错: {e}")
-
-except Exception as e:
-    st.sidebar.error(f"❌ 读取库文件失败：{e}")
-    sheet_frames = {}
-    sheets = []
+                # 保留原始数据
+                df_original = pd.read_excel(SAVE_FILE, sheet_name=sn)
+                df_original.to_excel(writer, sheet_name=sn, index=False)
+    st.cache_data.clear()
+    st.sidebar.info(f"🔧 已自动修复 {repaired_count} 张表的数量总和列")
 
 # -------------------- 智能化新增月份/季度 --------------------
 st.sidebar.markdown("### 📅 新增数据时间点")
@@ -269,7 +234,7 @@ if st.sidebar.button("创建新的时间点"):
         st.sidebar.error(f"❌ 时间点 {new_sheet_name} 已存在！")
     else:
         try:
-            base_df = pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组", "时间点"])
+            base_df = pd.DataFrame(columns=["明细", "数量总和", "员工", "值", "分组"])
 
             # ---------- 🧠 智能自动继承 ----------
             # 筛选所有比当前时间点早的sheet（跨年份）
@@ -278,9 +243,6 @@ if st.sidebar.button("创建新的时间点"):
             if prev_sheets:
                 prev_name = prev_sheets[-1]
                 base_df = sheet_frames.get(prev_name, base_df).copy()
-                # 清空"值"列，但保留其他结构
-                if "值" in base_df.columns:
-                    base_df["值"] = 0
                 st.sidebar.info(f"🔧 已从最近时间点 {prev_name} 自动继承数据")
             else:
                 st.sidebar.info("🔧 未找到上期数据，创建空白模板")
@@ -305,7 +267,8 @@ if sheets:
     if len(sheets) == 1:
         st.sidebar.warning("⚠️ 至少保留一个工作表，无法删除")
     else:
-        if st.sidebar.button("删除选中时间点", key="delete_btn", help="删除后不可恢复"):
+        if st.sidebar.button("删除选中时间点", key="delete_btn", help="删除后不可恢复",
+                             args=[{"key": "delete-btn"}]):
             success, msg = delete_sheet(SAVE_FILE, sheet_to_delete)
             st.sidebar.warning(msg)
             if success:
@@ -332,9 +295,6 @@ if st.sidebar.button("🧮 一键更新所有数量总和"):
                     )
                     df0 = df0.drop(columns=["数量总和"], errors="ignore")
                     df0 = df0.merge(sum_df, on="明细", how="left")
-                    # ✅ 确保时间点列存在
-                    if "时间点" not in df0.columns:
-                        df0["时间点"] = sheet_name
                     updated_frames[sheet_name] = df0
 
             # 写回所有表
@@ -386,30 +346,20 @@ sections_names = [
 view = st.sidebar.radio("切换视图", ["编辑数据", "大屏轮播", "单页模式", "显示所有视图", "能力分析"])
 
 
-# -------------------- 数据合并（修复后） --------------------
+# -------------------- 数据合并 --------------------
 def get_merged_df(keys: List[str], groups: List[str]) -> pd.DataFrame:
     """合并选中时间点和分组的数据"""
     dfs = []
     for k in keys:
         df0 = sheet_frames.get(k)
-        if df0 is not None and not df0.empty:
-            if groups and "分组" in df0.columns and len(groups) > 0:
+        if df0 is not None:
+            if groups and "分组" in df0.columns:
                 df0 = df0[df0["分组"].isin(groups)]
-            # ✅ 确保时间点列存在
-            if "时间点" not in df0.columns:
-                df0["时间点"] = k
             dfs.append(df0)
-    
     if not dfs:
+        st.warning("⚠️ 当前选择没有数据，请检查时间点或分组选择。")
         return pd.DataFrame()
-    
-    merged_df = pd.concat(dfs, axis=0, ignore_index=True)
-    
-    # 确保数值列类型正确
-    if "值" in merged_df.columns:
-        merged_df["值"] = pd.to_numeric(merged_df["值"], errors='coerce').fillna(0)
-    
-    return merged_df
+    return pd.concat(dfs, axis=0, ignore_index=True)
 
 
 df = get_merged_df(time_choice, selected_groups)
@@ -417,33 +367,21 @@ df = get_merged_df(time_choice, selected_groups)
 
 # -------------------- 图表函数 --------------------
 def chart_total(df0):
-    if df0 is None or df0.empty:
-        return go.Figure()
-
-    # 过滤分数总和
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-    
+    df0 = df0[df0["明细"] != "分数总和"]
     emp_stats = df0.groupby("员工")["值"].sum().sort_values(ascending=False).reset_index()
     fig = go.Figure(go.Bar(
         x=emp_stats["员工"],
         y=emp_stats["值"],
         text=emp_stats["值"],
         textposition="outside",
-        hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>",
-        marker_color='#4cc9f0'
+        hovertemplate="员工: %{x}<br>完成总值: %{y}<extra></extra>"
     ))
     fig.update_layout(template="plotly_dark", xaxis_title="员工", yaxis_title="完成总值")
     return fig
 
 
 def chart_stack(df0):
-    if df0 is None or df0.empty:
-        return go.Figure()
-
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
+    df0 = df0[df0["明细"] != "分数总和"]
     df_pivot = df0.pivot_table(index="明细", columns="员工", values="值", aggfunc="sum", fill_value=0)
     fig = go.Figure()
     for emp in df_pivot.columns:
@@ -453,19 +391,7 @@ def chart_stack(df0):
 
 
 def chart_heat(df0):
-    if df0 is None or df0.empty:
-        return {
-            "backgroundColor": "transparent",
-            "tooltip": {"position": "top"},
-            "xAxis": {"type": "category", "data": [], "axisLabel": {"color": "#fff"}},
-            "yAxis": {"type": "category", "data": [], "axisLabel": {"color": "#fff"}},
-            "visualMap": {"min": 0, "max": 1, "show": False, "inRange": {"color": ["#ff4d4d", "#4caf50"]}},
-            "series": [{"type": "heatmap", "data": []}]
-        }
-
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
-
+    df0 = df0[df0["明细"] != "分数总和"]
     tasks = df0["明细"].unique().tolist()
     emps = df0["员工"].unique().tolist()
     data = []
@@ -473,15 +399,12 @@ def chart_heat(df0):
         for j, e in enumerate(emps):
             v = int(df0[(df0["明细"] == t) & (df0["员工"] == e)]["值"].sum())
             data.append([j, i, v])
-    
-    max_val = max([d[2] for d in data]) if data else 1
-    
     return {
         "backgroundColor": "transparent",
         "tooltip": {"position": "top"},
         "xAxis": {"type": "category", "data": emps, "axisLabel": {"color": "#fff", "rotate": 45}},
         "yAxis": {"type": "category", "data": tasks, "axisLabel": {"color": "#fff"}},
-        "visualMap": {"min": 0, "max": max_val, "show": True,
+        "visualMap": {"min": 0, "max": max([d[2] for d in data]) if data else 1, "show": True,
                       "inRange": {"color": ["#ff4d4d", "#4caf50"]}, "textStyle": {"color": "#fff"}},
         "series": [{"type": "heatmap", "data": data, "emphasis": {"itemStyle": {"shadowBlur": 10}}}]
     }
@@ -489,64 +412,29 @@ def chart_heat(df0):
 
 # -------------------- 卡片显示 --------------------
 def show_cards(df0):
-    if df0 is None or df0.empty:
-        st.info("📭 暂无有效数据可展示")
+    df0 = df0[df0["明细"] != "分数总和"]
+    if df0.empty:
         return
-
-    if "明细" in df0.columns:
-        df0 = df0[df0["明细"] != "分数总和"]
 
     total_tasks = df0["明细"].nunique()
     total_people = df0["员工"].nunique()
     ps = df0.groupby("员工")["值"].sum()
     top_person = ps.idxmax() if not ps.empty else ""
-    top_value = ps.max() if not ps.empty else 0
     avg_score = round(ps.mean(), 1) if not ps.empty else 0
 
-    # ✅ 显示选择的时间点
-    time_points_display = ", ".join(time_choice) if time_choice else "未选择"
-
-    c1, c2, c3, c4, c5 = st.columns(5)
-    
-    # 使用更安全的HTML渲染
-    card_html = f'''
-    <div class="metric-card">
-        <div class="metric-value">{total_tasks}</div>
-        <div class="metric-label">任务数</div>
-    </div>
-    '''
-    c1.markdown(card_html, unsafe_allow_html=True)
-    
-    c2.markdown(f'''
-    <div class="metric-card">
-        <div class="metric-value">{total_people}</div>
-        <div class="metric-label">人数</div>
-    </div>
-    ''', unsafe_allow_html=True)
-    
-    c3.markdown(f'''
-    <div class="metric-card">
-        <div class="metric-value">{top_person[:8] if len(top_person) > 8 else top_person}</div>
-        <div class="metric-label">覆盖率最高</div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:5px">值: {top_value}</div>
-    </div>
-    ''', unsafe_allow_html=True)
-    
-    c4.markdown(f'''
-    <div class="metric-card">
-        <div class="metric-value">{avg_score}</div>
-        <div class="metric-label">平均完成值</div>
-    </div>
-    ''', unsafe_allow_html=True)
-    
-    c5.markdown(f'''
-    <div class="metric-card">
-        <div class="metric-label">选择的时间点</div>
-        <div style="font-size:14px;margin-top:10px;color:#4cc9f0">{len(time_choice)} 个</div>
-        <div style="font-size:12px;color:#94a3b8;margin-top:5px">{time_points_display[:30]}{'...' if len(time_points_display) > 30 else ''}</div>
-    </div>
-    ''', unsafe_allow_html=True)
-
+    c1, c2, c3, c4 = st.columns(4)
+    c1.markdown(
+        f"<div class='metric-card'><div class='metric-value'>{total_tasks}</div><div class='metric-label'>任务数</div></div>",
+        unsafe_allow_html=True)
+    c2.markdown(
+        f"<div class='metric-card'><div class='metric-value'>{total_people}</div><div class='metric-label'>人数</div></div>",
+        unsafe_allow_html=True)
+    c3.markdown(
+        f"<div class='metric-card'><div class='metric-value'>{top_person}</div><div class='metric-label'>覆盖率最高</div></div>",
+        unsafe_allow_html=True)
+    c4.markdown(
+        f"<div class='metric-card'><div class='metric-value'>{avg_score}</div><div class='metric-label'>平均数</div></div>",
+        unsafe_allow_html=True)
     st.markdown("<hr/>", unsafe_allow_html=True)
 
 
@@ -577,7 +465,7 @@ if view == "编辑数据":
         show_cards(df)
         st.info("你可以直接编辑下面的表格，修改完成后点击【保存】按钮。")
 
-        # 读取原始完整数据
+        # 读取原始完整数据（解决问题5：保留其他分组数据）
         sheet_name = time_choice[0]
         original_df = pd.read_excel(SAVE_FILE, sheet_name=sheet_name)
 
@@ -695,33 +583,25 @@ elif view == "能力分析":
         emp_color_idx = 0
         for sheet in time_choice:
             df_sheet = get_merged_df([sheet], selected_groups)
-            if df_sheet is None or df_sheet.empty:
-                continue
-                
             df_sheet = df_sheet[df_sheet["明细"] != "分数总和"]
-            if df_sheet.empty:
-                continue
-                
             df_pivot = df_sheet.pivot(index="明细", columns="员工", values="值").fillna(0)
 
             # 1. 员工任务完成情况 - 折线图
             for emp in selected_emps:
-                if emp in df_pivot.columns:
-                    fig1.add_trace(go.Scatter(
-                        x=tasks,
-                        y=df_pivot[emp].reindex(tasks, fill_value=0),
-                        mode="lines+markers",
-                        name=f"{sheet}-{emp}",
-                        line=dict(color=BRIGHT_COLORS[emp_color_idx % len(BRIGHT_COLORS)], width=3),
-                        marker=dict(size=8)
-                    ))
-                    emp_color_idx += 1
+                fig1.add_trace(go.Scatter(
+                    x=tasks,
+                    y=df_pivot[emp].reindex(tasks, fill_value=0),
+                    mode="lines+markers",
+                    name=f"{sheet}-{emp}",
+                    line=dict(color=BRIGHT_COLORS[emp_color_idx % len(BRIGHT_COLORS)], width=3),
+                    marker=dict(size=8)
+                ))
+                emp_color_idx += 1
 
             # 2. 任务整体完成度趋势 - 折线图（固定颜色映射）
-            task_sums = df_pivot.sum(axis=1).reindex(tasks, fill_value=0)
             fig2.add_trace(go.Scatter(
                 x=tasks,
-                y=task_sums,
+                y=df_pivot.sum(axis=1).reindex(tasks, fill_value=0),
                 mode="lines+markers",
                 name=sheet,
                 line=dict(color=sheet_color_map[sheet], width=3),
@@ -729,15 +609,13 @@ elif view == "能力分析":
             ))
 
             # 3. 员工整体完成度对比 - 分组柱状图（彻底解决重叠问题）
-            emp_sums = df_pivot.sum(axis=0)
-            if not emp_sums.empty:
-                fig3.add_trace(go.Bar(
-                    x=emp_sums.index,
-                    y=emp_sums.values,
-                    name=sheet,
-                    marker=dict(color=sheet_color_map[sheet]),
-                    width=0.3,  # 极致缩小宽度，避免重叠
-                ))
+            fig3.add_trace(go.Bar(
+                x=df_pivot.columns,
+                y=df_pivot.sum(axis=0),
+                name=sheet,
+                marker=dict(color=sheet_color_map[sheet]),
+                width=0.3,  # 极致缩小宽度，避免重叠
+            ))
 
         # 优化图表样式 - 重点修复柱状图布局
         fig1.update_layout(
