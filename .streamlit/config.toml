@@ -1,7 +1,14 @@
+# .streamlit/config.toml
 [theme]
-base="dark"
-primaryColor="#4cc9f0"
-backgroundColor="#0d1b2a"
-secondaryBackgroundColor="#1b263b"
-textColor="#ffffff"
-font="sans serif"
+primaryColor = "#4cc9f0"
+backgroundColor = "#0d1b2a"
+secondaryBackgroundColor = "#1b263b"
+textColor = "#ffffff"
+font = "sans serif"
+base = "dark"
+
+[server]
+port = 8501
+
+[browser]
+serverAddress = "localhost"
